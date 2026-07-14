@@ -1,0 +1,63 @@
+// N-MAP — nikvpn multi api panel
+// Prisma schema: مدل‌های داده برای اکانت‌های API، نودها و لینک‌های ساب
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// اکانت‌های API — نگهداری توکن دسترسی پلتفرم‌های مختلف (Cloudflare / Vercel / ...)
+model Account {
+  id        String   @id @default(cuid())
+  name      String
+  platform  String // "cloudflare" | "vercel" | ...
+  token     String
+  email     String? // برخی پلتفرم‌ها (Cloudflare Global Key) به ایمیل نیاز دارند
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  nodes    Node[]
+  subLinks SubLink[]
+
+  @@index([platform])
+}
+
+/// نودها (Proxy Nodes) — وابسته به اکانت
+model Node {
+  id           String   @id @default(cuid())
+  name         String
+  ip           String
+  port         Int
+  type         String   @default("vless") // vless | vmess | trojan | shadowsocks | ...
+  healthStatus String   @default("unknown") // healthy | unhealthy | unknown
+  configLink   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
+
+/// لینک‌های ساب (Sub Links) — وابسته به اکانت
+model SubLink {
+  id           String    @id @default(cuid())
+  name         String
+  url          String
+  trafficLimit BigInt    @default(0) // بایت — 0 یعنی نامحدود
+  trafficUsed  BigInt    @default(0) // بایت
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+}
