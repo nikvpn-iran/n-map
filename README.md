@@ -4,214 +4,92 @@
 
 # N-MAP
 
-### nikvpn multi api panel
+**nikvpn multi api panel**
 
-پنل مدیریت متمرکز برای هندل کردن همزمان چندین اکانت API از پلتفرم‌های مختلف (Cloudflare، Vercel و ...)
+مدیریت همزمان چندین اکانت API از پلتفرم‌های مختلف
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
+[![MIT License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15-black?logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?logo=typescript)](https://typescriptlang.org)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-v4-38bdf8?logo=tailwindcss)](https://tailwindcss.com)
 
 </div>
 
 ---
 
-## ویژگی‌ها
+## امکانات
 
-- **مدیریت چند اکانت API** — اتصال همزمان نامحدود توکن از پلتفرم‌های مختلف (مثلاً ۳ Cloudflare + ۲ Vercel)
-- **مدیریت نودهای پروکسی** — ثبت و مانیتور نودها با آی‌پی، پورت، نوع (VLESS/VMess/Trojan/Shadowsocks) و وضعیت سلامت
-- **مدیریت لینک‌های ساب** — ساب‌اسکریپشن‌ها با کنترل ترافیک و تاریخ انقضا
-- **داشبورد لحظه‌ای** — آمار زنده بدون نیاز به رفرش صفحه
-- **رابط کاربری فارسی (RTL)** — طراحی کاملاً راست‌به‌چپ با فونت وزیرمتن
-- **ریسپانسیو** — سازگار با موبایل، تبلت و دسکتاپ
-- **دارک مود** — تم تیره حرفه‌ای
+- مدیریت **نامحدود اکانت API** از پلتفرم‌های مختلف (مثلاً ۳ Cloudflare + ۲ Vercel)
+- دریافت توکن **با یک کلیک** — پرمیشن‌ها از قبل آماده‌اند
+- **اعتبارسنجی خودکار** توکن قبل از ذخیره
+- معماری **اصلی/ثانویه** — توکن اول برای زیرساخت، بقیه برای ریکوئست رایگان
+- مدیریت **نودهای پروکسی** (VLESS / VMess / Trojan / Shadowsocks)
+- مدیریت **لینک‌های ساب** با کنترل ترافیک و انقضا
+- داشبورد **لحظه‌ای** — آمار بدون رفرش آپدیت می‌شود
+- رابط کاربری **فارسی RTL** — تم تیره، ریسپانسیو
 
-## تکنولوژی‌ها
-
-| لایه | تکنولوژی |
-|------|----------|
-| فریمورک | Next.js 15 (App Router) |
-| زبان | TypeScript 5 |
-| استایل | Tailwind CSS v4 |
-| دیتابیس | SQLite + Prisma ORM |
-| مدیریت State | TanStack React Query |
-| اعتبارسنجی | Zod |
-| آیکون‌ها | Lucide React |
-
-## پیش‌نیازها
-
-- [Node.js](https://nodejs.org) نسخه **18** یا بالاتر
-- [npm](https://npmjs.com) نسخه **9** یا بالاتر
-
-## نصب و راه‌اندازی
-
-**۱. کلون کردن ریپازیتوری:**
+## نصب
 
 ```bash
 git clone https://github.com/nikvpn-iran/n-map.git
 cd n-map
-```
-
-**۲. نصب پکیج‌ها:**
-
-```bash
 npm install
-```
-
-**۳. ساخت دیتابیس و اجرای مایگریشن:**
-
-```bash
 npx prisma migrate dev
-```
-
-> این دستور دیتابیس SQLite را می‌سازد و داده‌های نمونه (Seed) را وارد می‌کند.
-
-**۴. اجرای سرور توسعه:**
-
-```bash
 npm run dev
 ```
 
-**۵. باز کردن پنل:**
+پنل روی `http://localhost:3000` اجرا می‌شود.
 
-مرورگر را باز کنید و به آدرس زیر بروید:
+## نحوه اضافه کردن اکانت
 
-```
-http://localhost:3000
-```
+۱. روی **«افزودن اکانت API»** کلیک کنید
 
-## ساختار پروژه
+۲. پلتفرم (Cloudflare یا Vercel) را انتخاب کنید
 
-```
-n-map/
-├── prisma/
-│   ├── schema.prisma        # مدل‌های دیتابیس
-│   ├── seed.ts               # داده‌های نمونه اولیه
-│   └── migrations/           # فایل‌های مایگریشن
-├── public/
-│   └── logo.jpg              # لوگوی NikVPN
-├── src/
-│   ├── app/
-│   │   ├── layout.tsx        # لایوت اصلی (RTL + فونت فارسی)
-│   │   ├── page.tsx          # صفحه داشبورد
-│   │   ├── globals.css       # استایل‌های سراسری + تم رنگی
-│   │   └── api/
-│   │       ├── accounts/     # CRUD اکانت‌ها
-│   │       ├── nodes/        # CRUD نودها
-│   │       ├── sublinks/     # CRUD لینک‌های ساب
-│   │       └── stats/        # آمار داشبورد
-│   ├── components/
-│   │   ├── Header.tsx        # هدر با لوگو و برندینگ
-│   │   ├── StatCard.tsx      # کارت‌های آماری
-│   │   ├── Modal.tsx         # مودال عمومی
-│   │   ├── AddAccountForm.tsx
-│   │   ├── AddNodeForm.tsx
-│   │   ├── AddSubLinkForm.tsx
-│   │   ├── AccountsTable.tsx
-│   │   ├── NodesTable.tsx
-│   │   ├── SubLinksTable.tsx
-│   │   └── Providers.tsx     # React Query Provider
-│   ├── hooks/
-│   │   └── useApi.ts         # هوک‌های API (React Query)
-│   └── lib/
-│       ├── prisma.ts         # اتصال Prisma
-│       ├── utils.ts          # توابع کمکی
-│       └── validations.ts    # اسکیماهای Zod
-├── package.json
-├── tsconfig.json
-├── next.config.ts
-└── postcss.config.mjs
-```
+۳. روی **«دریافت توکن»** بزنید — به صفحه ساخت توکن با پرمیشن‌های آماده هدایت می‌شوید
 
-## مدل‌های داده
+۴. توکن را کپی و در پنل paste کنید — اعتبارسنجی خودکار انجام می‌شود
 
-### Account (اکانت API)
-| فیلد | نوع | توضیح |
-|------|-----|-------|
-| name | String | نام اکانت |
-| platform | String | پلتفرم (`cloudflare` / `vercel`) |
-| token | String | توکن دسترسی API |
-| email | String? | ایمیل (اختیاری — برای Cloudflare Global Key) |
-| isActive | Boolean | فعال/غیرفعال |
+۵. **ثبت اکانت** — اولین اکانت به‌عنوان «اصلی» تنظیم می‌شود
 
-### Node (نود پروکسی)
-| فیلد | نوع | توضیح |
-|------|-----|-------|
-| name | String | نام نود |
-| ip | String | آدرس IP |
-| port | Int | شماره پورت |
-| type | String | نوع (`vless` / `vmess` / `trojan` / `shadowsocks`) |
-| healthStatus | String | وضعیت سلامت (`healthy` / `unhealthy` / `unknown`) |
-| configLink | String? | لینک کانفیگ |
-| accountId | String | اکانت مرتبط |
+> اکانت‌های بعدی به‌عنوان «ثانویه» اضافه می‌شوند و فقط از ریکوئست‌های رایگان روزانه پلتفرم استفاده می‌کنند.
 
-### SubLink (لینک ساب)
-| فیلد | نوع | توضیح |
-|------|-----|-------|
-| name | String | نام لینک |
-| url | String | آدرس URL ساب‌اسکریپشن |
-| trafficLimit | BigInt | سقف ترافیک (بایت) |
-| trafficUsed | BigInt | ترافیک مصرف‌شده (بایت) |
-| expiresAt | DateTime? | تاریخ انقضا |
-| accountId | String | اکانت مرتبط |
+## دستورات
 
-## API Endpoints
+| دستور | عملکرد |
+|-------|--------|
+| `npm run dev` | سرور توسعه |
+| `npm run build` | بیلد پروداکشن |
+| `npm start` | اجرای پروداکشن |
+| `npm run db:migrate` | مایگریشن دیتابیس |
+| `npm run db:seed` | وارد کردن داده نمونه |
+
+## API
 
 | متد | مسیر | عملکرد |
 |-----|------|--------|
-| `GET` | `/api/stats` | آمار کلی داشبورد |
-| `GET` | `/api/accounts` | لیست تمام اکانت‌ها |
-| `POST` | `/api/accounts` | افزودن اکانت جدید |
-| `GET` | `/api/accounts/:id` | جزئیات یک اکانت |
-| `PUT` | `/api/accounts/:id` | ویرایش اکانت |
-| `DELETE` | `/api/accounts/:id` | حذف اکانت |
-| `GET` | `/api/nodes` | لیست نودها |
-| `POST` | `/api/nodes` | افزودن نود |
-| `GET` | `/api/sublinks` | لیست لینک‌های ساب |
-| `POST` | `/api/sublinks` | افزودن لینک ساب |
+| `GET` | `/api/stats` | آمار داشبورد |
+| `GET` `POST` | `/api/accounts` | لیست / افزودن اکانت |
+| `GET` `PUT` `DELETE` | `/api/accounts/:id` | جزئیات / ویرایش / حذف |
+| `POST` | `/api/accounts/verify` | اعتبارسنجی توکن |
+| `GET` `POST` | `/api/nodes` | لیست / افزودن نود |
+| `GET` `POST` | `/api/sublinks` | لیست / افزودن لینک ساب |
 
-## دستورات مفید
+## تکنولوژی‌ها
 
-```bash
-# اجرای سرور توسعه
-npm run dev
-
-# بیلد پروداکشن
-npm run build
-
-# اجرای سرور پروداکشن
-npm start
-
-# ساخت مایگریشن جدید
-npm run db:migrate
-
-# ری‌ست و seed دیتابیس
-npm run db:seed
-```
+Next.js 15 &bull; TypeScript &bull; Tailwind CSS v4 &bull; Prisma + SQLite &bull; TanStack Query &bull; Zod
 
 ## مشارکت
 
-از Pull Request و Issue استقبال می‌کنیم! برای مشارکت:
-
-1. ریپازیتوری را Fork کنید
-2. برنچ جدید بسازید (`git checkout -b feature/amazing-feature`)
-3. تغییرات خود را Commit کنید
-4. به برنچ Push کنید (`git push origin feature/amazing-feature`)
-5. یک Pull Request باز کنید
+از Pull Request استقبال می‌کنیم. Fork کنید، برنچ بسازید، تغییرات را Push کنید.
 
 ## لایسنس
 
-این پروژه تحت لایسنس [MIT](LICENSE) منتشر شده است.
-
-## تقدیر
-
-این پروژه با الهام از [Zeus Panel](https://github.com/IR-NETLIFY/zeus) توسعه یافته و به عنوان نسخه ارتقایافته و مدرن آن طراحی شده است.
+[MIT](LICENSE)
 
 ---
 
 <div align="center">
 
-ساخته شده با عشق توسط تیم [NikVPN](https://github.com/nikvpn-iran)
+با الهام از [Zeus Panel](https://github.com/IR-NETLIFY/zeus) — ساخته شده توسط [NikVPN](https://github.com/nikvpn-iran)
 
 </div>

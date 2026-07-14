@@ -19,6 +19,15 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const { id } = await params;
     const body = await req.json();
     const data = updateAccountSchema.parse(body);
+
+    // اگر isPrimary = true ارسال شده، بقیه را false کن
+    if (data.isPrimary === true) {
+      await prisma.account.updateMany({
+        where: { isPrimary: true, id: { not: id } },
+        data: { isPrimary: false },
+      });
+    }
+
     const account = await prisma.account.update({
       where: { id },
       data: {
@@ -27,6 +36,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
         ...(data.token !== undefined && { token: data.token }),
         ...(data.email !== undefined && { email: data.email || null }),
         ...(data.isActive !== undefined && { isActive: data.isActive }),
+        ...(data.isPrimary !== undefined && { isPrimary: data.isPrimary }),
       },
     });
     return NextResponse.json(account);

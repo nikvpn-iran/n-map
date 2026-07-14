@@ -29,3 +29,21 @@ export function platformLabel(platform: string): string {
   };
   return map[platform.toLowerCase()] ?? platform;
 }
+
+export function getTokenUrl(platform: string): string {
+  if (platform === "cloudflare") {
+    const permissions = JSON.stringify([
+      { key: "workers_scripts", type: "edit" },
+      { key: "workers_kv_storage", type: "edit" },
+      { key: "d1", type: "edit" },
+      { key: "account_settings", type: "read" },
+      { key: "workers_subdomain", type: "edit" },
+      { key: "account_analytics", type: "read" },
+    ]);
+    return `https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=${encodeURIComponent(permissions)}&accountId=*&zoneId=all&name=N-MAP-Token`;
+  }
+  if (platform === "vercel") {
+    return "https://vercel.com/account/tokens";
+  }
+  return "#";
+}

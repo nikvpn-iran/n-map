@@ -6,6 +6,8 @@ export const createAccountSchema = z.object({
   token: z.string().min(1, "توکن دسترسی الزامی است"),
   email: z.string().email("ایمیل معتبر نیست").optional().or(z.literal("")),
   isActive: z.boolean().default(true),
+  isPrimary: z.boolean().optional(),
+  accountExternalId: z.string().optional().or(z.literal("")),
 });
 
 export const updateAccountSchema = createAccountSchema.partial();

@@ -4,7 +4,7 @@ import { createAccountSchema } from "@/lib/validations";
 
 export async function GET() {
   const accounts = await prisma.account.findMany({
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
     include: {
       _count: { select: { nodes: true, subLinks: true } },
     },
@@ -17,6 +17,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = createAccountSchema.parse(body);
 
+    // اگر هیچ اکانتی نیست، اولین اکانت primary شود
+    const existingCount = await prisma.account.count();
+    const shouldBePrimary = existingCount === 0;
+
     const account = await prisma.account.create({
       data: {
         name: data.name,
@@ -24,6 +28,8 @@ export async function POST(req: NextRequest) {
         token: data.token,
         email: data.email || null,
         isActive: data.isActive,
+        isPrimary: shouldBePrimary,
+        accountExternalId: data.accountExternalId || null,
       },
     });
 

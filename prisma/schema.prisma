@@ -15,9 +15,11 @@ model Account {
   id        String   @id @default(cuid())
   name      String
   platform  String // "cloudflare" | "vercel" | ...
-  token     String
-  email     String? // برخی پلتفرم‌ها (Cloudflare Global Key) به ایمیل نیاز دارند
-  isActive  Boolean  @default(true)
+  token             String
+  email             String?
+  isActive          Boolean  @default(true)
+  isPrimary         Boolean  @default(false)
+  accountExternalId String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

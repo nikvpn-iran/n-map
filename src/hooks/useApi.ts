@@ -22,8 +22,17 @@ export interface Account {
   token: string;
   email: string | null;
   isActive: boolean;
+  isPrimary: boolean;
+  accountExternalId: string | null;
   createdAt: string;
   _count?: { nodes: number; subLinks: number };
+}
+
+export interface VerifyResult {
+  valid: boolean;
+  accountExternalId?: string;
+  accountName?: string;
+  error?: string;
 }
 
 export interface NodeItem {
@@ -67,6 +76,19 @@ export function useSubLinks() {
   return useQuery<SubLinkItem[]>({ queryKey: ["sublinks"], queryFn: () => fetcher("/api/sublinks") });
 }
 
+export function useVerifyToken() {
+  return useMutation<VerifyResult, Error, { token: string; platform: string }>({
+    mutationFn: async ({ token, platform }) => {
+      const res = await fetch("/api/accounts/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, platform }),
+      });
+      return res.json();
+    },
+  });
+}
+
 export function useCreateAccount() {
   const qc = useQueryClient();
   return useMutation({
@@ -102,6 +124,24 @@ export function useDeleteAccount() {
       qc.invalidateQueries({ queryKey: ["stats"] });
       qc.invalidateQueries({ queryKey: ["nodes"] });
       qc.invalidateQueries({ queryKey: ["sublinks"] });
+    },
+  });
+}
+
+export function useSetPrimary() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/accounts/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPrimary: true }),
+      });
+      if (!res.ok) throw new Error("خطا");
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
 }
