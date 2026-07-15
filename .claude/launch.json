@@ -4,8 +4,8 @@
     {
       "name": "n-map-dev",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["next", "dev"],
-      "port": 3000
+      "runtimeArgs": ["wrangler", "dev", "n-map.js", "--local", "--port", "8787"],
+      "port": 8787
     }
   ]
 }
