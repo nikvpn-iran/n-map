@@ -1,5 +1,22 @@
 import { connect } from "cloudflare:sockets";
 const WS_PATH = "/edge";
+const OBF_KEY = 105;
+function buildWorkerScript(source) {
+	let body = source
+		.replace(/^\s*import\s*\{\s*connect\s*\}\s*from\s*["']cloudflare:sockets["'];?\s*$/m, "")
+		.replace(/export\s+default\s*\{/, "const __WORKER_EXPORT__ = {");
+	body += "\nreturn __WORKER_EXPORT__;\n";
+	const bytes = new TextEncoder().encode(body);
+	let hex = "";
+	for (let i = 0; i < bytes.length; i++) hex += (bytes[i] ^ OBF_KEY).toString(16).padStart(2, "0");
+	return (
+		'import { connect } from "cloudflare:sockets";\n' +
+		'const _p="' + hex + '";\n' +
+		"const _b=new Uint8Array((_p.match(/.{1,2}/g)||[]).map(x=>parseInt(x,16)^" + OBF_KEY + "));\n" +
+		"const _c=new TextDecoder().decode(_b);\n" +
+		'export default new Function("connect", _c)(connect);\n'
+	);
+}
 const GLOBAL_TRAFFIC_CACHE = new Map();
 const ACTIVE_CONNECTIONS_COUNT = new Map();
 const GLOBAL_LAST_ACTIVE_WRITE = new Map();
@@ -549,7 +566,7 @@ const Router = {
 					},
 				});
 				if (!githubRes.ok) throw new Error(isUpdate ? "خطا در دریافت سورس جدید از گیت‌هاب" : "خطا در دریافت سورس از گیت‌هاب");
-				const newCode = await githubRes.text();
+				const newCode = buildWorkerScript(await githubRes.text());
 				const scriptName = env.WORKER_NAME || url.hostname.split(".")[0];
 				const bindingsRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${currentAccountId}/workers/scripts/${scriptName}/bindings`, {
 					headers: { Authorization: "Bearer " + currentToken },

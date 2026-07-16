@@ -57,6 +57,11 @@ Worker and the D1 database for you and returns the final panel URL.
 > The deployer is **idempotent**: running it again on the same account reuses the
 > existing Worker and database instead of creating duplicates.
 
+> At deploy time the panel source is compiled into a single self-contained,
+> encoded Worker module before it is uploaded. The deployed script therefore
+> carries no readable application signatures. The in-panel self-update produces
+> the same encoded output, so updating never reverts the Worker to a raw source.
+
 ### Step 3 — First login
 
 Open the panel URL — on first login you set a management password.
