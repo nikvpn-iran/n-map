@@ -15,6 +15,11 @@
 # debug
 npm-debug.log*
 
+# temporary analysis / scratch files
+zd.js
+*.decoded.js
+build-test.cjs
+
 # env files
 .env
 .env*.local
