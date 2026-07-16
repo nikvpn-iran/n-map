@@ -1,3 +1,50 @@
+const PANEL_PREFIX = "panel-";
+const LEGACY_PREFIXES = ["n-map-panel", "n-map"];
+const DB_PREFIX = "app-db-";
+const SOURCE_URL = "https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/n-map.js";
+
+function isOurPanel(name) {
+	if (!name) return false;
+	if (name.startsWith(PANEL_PREFIX)) return true;
+	return LEGACY_PREFIXES.some((p) => name.startsWith(p));
+}
+
+async function cfApi(path, token, options = {}) {
+	const headers = Object.assign({ Authorization: `Bearer ${token}` }, options.headers || {});
+	if (options.json !== undefined) {
+		headers["Content-Type"] = "application/json";
+		options.body = JSON.stringify(options.json);
+	}
+	const res = await fetch(`https://api.cloudflare.com/client/v4${path}`, {
+		method: options.method || "GET",
+		headers,
+		body: options.body,
+	});
+	return res.json();
+}
+
+async function resolveAccountId(token) {
+	const accData = await cfApi("/accounts", token);
+	if (!accData.success || !accData.result || accData.result.length === 0) {
+		throw new Error("فقط با دکمه نارنجی «دریافت توکن» توکن بسازید.");
+	}
+	return accData.result[0].id;
+}
+
+async function findExistingPanel(accountId, token) {
+	const scriptsData = await cfApi(`/accounts/${accountId}/workers/scripts`, token);
+	if (!scriptsData.success || !Array.isArray(scriptsData.result)) return null;
+	const match = scriptsData.result.find((s) => isOurPanel(s.id));
+	return match ? match.id : null;
+}
+
+async function getWorkerD1Id(accountId, token, scriptName) {
+	const bindingsData = await cfApi(`/accounts/${accountId}/workers/scripts/${scriptName}/bindings`, token);
+	if (!bindingsData.success || !Array.isArray(bindingsData.result)) return null;
+	const d1 = bindingsData.result.find((b) => b.type === "d1");
+	return d1 ? d1.database_id || d1.id : null;
+}
+
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url);
@@ -14,47 +61,52 @@ export default {
 					Authorization: `Bearer ${token}`,
 					"Content-Type": "application/json",
 				};
-				const accRes = await fetch("https://api.cloudflare.com/client/v4/accounts", { headers });
-				const accData = await accRes.json();
-				if (!accData.success || !accData.result || accData.result.length === 0) {
-					throw new Error("فقط با دکمه نارنجی «دریافت توکن» توکن بسازید.");
-				}
-				const accountId = accData.result[0].id;
+				const accountId = await resolveAccountId(token);
+
+				// resolve workers.dev subdomain
 				let devSub = null;
-				const subRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`, { headers });
-				const subData = await subRes.json();
+				const subData = await cfApi(`/accounts/${accountId}/workers/subdomain`, token);
 				if (subData.success && subData.result && subData.result.subdomain) {
 					devSub = subData.result.subdomain;
 				} else {
-					const newSub = `n-map-${Math.random().toString(36).substring(2, 8)}`;
-					const createSub = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`, {
+					const newSub = `${Math.random().toString(36).substring(2, 10)}`;
+					const createSubData = await cfApi(`/accounts/${accountId}/workers/subdomain`, token, {
 						method: "PUT",
-						headers,
-						body: JSON.stringify({ subdomain: newSub }),
+						json: { subdomain: newSub },
 					});
-					const createSubData = await createSub.json();
 					if (!createSubData.success) {
 						const cfError = createSubData.errors && createSubData.errors.length > 0 ? createSubData.errors[0].message : "نامشخص";
 						throw new Error(`CF_TOS_ERROR|${cfError}`);
 					}
 					devSub = newSub;
 				}
-				const uniqueSuffix = Math.random().toString(36).substring(2, 8);
-				const workerName = `n-map-panel-${uniqueSuffix}`;
-				const dbName = `n-map-db-${uniqueSuffix}`;
-				const dbRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/d1/database`, {
-					method: "POST",
-					headers,
-					body: JSON.stringify({ name: dbName }),
-				});
-				const dbData = await dbRes.json();
-				if (!dbData.success) {
-					const cfError = dbData.errors && dbData.errors.length > 0 ? dbData.errors[0].message : "نامشخص";
-					throw new Error(`CF_DB_ERROR|${cfError}`);
+
+				// idempotent: reuse existing panel + its D1 instead of creating duplicates
+				let workerName = await findExistingPanel(accountId, token);
+				let dbUuid = null;
+				const reused = !!workerName;
+
+				if (workerName) {
+					dbUuid = await getWorkerD1Id(accountId, token, workerName);
+				} else {
+					workerName = `${PANEL_PREFIX}${Math.random().toString(36).substring(2, 8)}`;
 				}
-				const dbUuid = dbData.result.uuid;
-				await new Promise((resolve) => setTimeout(resolve, 1000));
-				const githubRes = await fetch("https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/n-map.js?t=" + Date.now());
+
+				if (!dbUuid) {
+					const dbName = `${DB_PREFIX}${Math.random().toString(36).substring(2, 8)}`;
+					const dbData = await cfApi(`/accounts/${accountId}/d1/database`, token, {
+						method: "POST",
+						json: { name: dbName },
+					});
+					if (!dbData.success) {
+						const cfError = dbData.errors && dbData.errors.length > 0 ? dbData.errors[0].message : "نامشخص";
+						throw new Error(`CF_DB_ERROR|${cfError}`);
+					}
+					dbUuid = dbData.result.uuid;
+					await new Promise((resolve) => setTimeout(resolve, 1000));
+				}
+
+				const githubRes = await fetch(SOURCE_URL + "?t=" + Date.now());
 				if (!githubRes.ok) throw new Error("خطا در دریافت سورس از گیت‌هاب.");
 				const nmapCode = await githubRes.text();
 				const metadata = {
@@ -86,7 +138,7 @@ export default {
 				});
 				if (!routeRes.ok) throw new Error("خطا در فعال‌سازی لینک نهایی.");
 				const finalUrl = `https://${workerName}.${devSub}.workers.dev/panel`;
-				return new Response(JSON.stringify({ success: true, url: finalUrl }), {
+				return new Response(JSON.stringify({ success: true, url: finalUrl, reused }), {
 					headers: { "Content-Type": "application/json" },
 				});
 			} catch (error) {
@@ -120,7 +172,7 @@ export default {
 				}
 				let panels = [];
 				for (let script of scriptsData.result) {
-					if (script.id.startsWith("n-map-panel") || script.id.startsWith("n-map")) {
+					if (isOurPanel(script.id)) {
 						panels.push({ name: script.id });
 					}
 				}
@@ -382,7 +434,7 @@ function getHtmlContent() {
                     <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
                 </div>
             <h2 class="text-2xl font-black text-gray-900 dark:text-white mb-2">N-MAP Deployer</h2>
-            <p class="text-sm font-medium text-gray-500 dark:text-zinc-400">نصب خودکار پنل زئوس روی کلودفلر</p>
+            <p class="text-sm font-medium text-gray-500 dark:text-zinc-400">نصب خودکار پنل روی کلودفلر</p>
 			<p class="text-sm font-medium text-gray-500 dark:text-zinc-400">🔥  روزانه 10 الی 100 گیگ کانفیگ رایگان  🔥</p>
         </div>
         <div class="space-y-5 relative z-10">
@@ -745,7 +797,9 @@ async function reloadNmapPanel(scriptName) {
         showToast('خطا: ' + e.message, 'error');
     }
 }
+        let deployInProgress = false;
         async function startDeploy() {
+            if (deployInProgress) return;
             const token = document.getElementById('apiToken').value.trim();
             const btn = document.getElementById('deployBtn');
             const statusContainer = document.getElementById('status-container');
@@ -763,6 +817,7 @@ async function reloadNmapPanel(scriptName) {
                 return;
             }
             errorBox.classList.add('hidden');
+            deployInProgress = true;
             btn.disabled = true;
             document.getElementById('apiToken').disabled = true;
             btn.innerText = 'در حال پردازش...';
@@ -784,7 +839,7 @@ async function reloadNmapPanel(scriptName) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token })
                 });
-                statusText.innerText = 'در حال دریافت پنل زئوس...';
+                statusText.innerText = 'در حال دریافت و نصب پنل...';
                 statusPct.innerText = '۷۵٪';
                 progressBar.style.width = '75%';
                 await sleep(600);
@@ -836,6 +891,7 @@ async function reloadNmapPanel(scriptName) {
                     throw new Error(result.error);
                 }
             } catch(e) {
+                deployInProgress = false;
                 statusContainer.classList.add('hidden');
                 errorBox.classList.remove('hidden');
                 btn.disabled = false;

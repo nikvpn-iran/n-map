@@ -1,92 +1,67 @@
 <div align="center">
 
-<img src="logo.jpg" alt="NikVPN Logo" width="120" />
+<img src="logo.jpg" alt="Logo" width="120" />
 
 # N-MAP
 
-**nikvpn multi api panel**
-
-پنل مدیریت روی Cloudflare Workers — بدون سرور، بدون هزینه، با پشتیبانی از چند اکانت API
+**Lightweight edge management panel for Cloudflare Workers**
 
 [![MIT License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
-[![D1 Database](https://img.shields.io/badge/D1-Database-F38020?logo=cloudflare&logoColor=white)](https://developers.cloudflare.com/d1)
 
 </div>
 
 ---
 
-## معرفی
+## Overview
 
-N-MAP یک پنل مدیریت تک‌فایلی است که کاملاً روی زیرساخت رایگان **Cloudflare Workers** و دیتابیس **D1** اجرا می‌شود. نیازی به سرور، VPS یا نصب هیچ نرم‌افزاری ندارید — کل پنل با یک کلیک روی اکانت کلودفلر خودتان مستقر (deploy) می‌شود.
+N-MAP is a single-file management panel that runs entirely on the free
+**Cloudflare Workers** platform with a **D1** database. No server, no VPS and no
+software installation are required — the whole panel deploys to your own
+Cloudflare account with a single click.
 
-## امکانات
+## Features
 
-- استقرار **یک‌کلیکی** روی اکانت Cloudflare خودتان — بدون سرور و بدون هزینه
-- مدیریت **چند اکانت API** از پلتفرم‌های مختلف (Cloudflare و Vercel)
-- دریافت توکن **با یک کلیک** — پرمیشن‌ها از قبل آماده‌اند
-- **اعتبارسنجی خودکار** توکن قبل از ذخیره
-- معماری **اصلی/ثانویه** — اکانت اول برای زیرساخت، بقیه برای ریکوئست رایگان روزانه
-- مدیریت **کاربران** با کنترل ترافیک، انقضا و آمار لحظه‌ای
-- مدیریت **لینک‌های ساب** و پروکسی (مخزن آیپی تمیز و پروکسی چند کشور)
-- **آپدیت خودکار** پنل از داخل خود پنل
-- **پشتیبان‌گیری و بازیابی** کاربران
-- رابط کاربری **فارسی RTL** — تم تیره (AMOLED)، ریسپانسیو
+- **One-click deploy** to your own Cloudflare account
+- **Multi-account** API management (Cloudflare and Vercel)
+- One-click token retrieval with pre-scoped permissions
+- Automatic token validation before saving
+- Primary / secondary account architecture
+- User management with quota, expiry and live stats
+- Self-update from inside the panel
+- Backup and restore
+- Responsive dark UI
 
-## نحوه استقرار (Deploy)
+## Deploy
 
-استقرار از طریق **دیپلویر** (`n-map-deployer.js`) انجام می‌شود که خودش Worker و دیتابیس D1 را می‌سازد و لینک نهایی پنل را به شما می‌دهد.
+Deployment is handled by the deployer (`n-map-deployer.js`), which creates the
+Worker and the D1 database for you and returns the final panel URL.
 
-### گام ۱ — ساخت Worker دیپلویر
+### Step 1 — Create the deployer Worker
 
-۱. وارد داشبورد Cloudflare شوید → **Workers & Pages** → **Create Worker**
+1. Open the Cloudflare dashboard → **Workers & Pages** → **Create Worker**
+2. Give it any name, create it, then click **Edit code**
+3. Copy the contents of [`n-map-deployer.js`](n-map-deployer.js) and paste it in place of the default code
+4. Click **Deploy** and open the `*.workers.dev` link
 
-۲. یک نام دلخواه بگذارید و Worker را بسازید، سپس **Edit code** را بزنید
+### Step 2 — Deploy the panel
 
-۳. محتوای فایل [`n-map-deployer.js`](n-map-deployer.js) را کپی کنید و به‌جای کد پیش‌فرض بگذارید
+1. Click **Get token** and follow the pre-filled token page
+2. Create the token, copy it, and paste it into the deployer
+3. Click **Deploy** — the deployer will automatically:
+   - create a D1 database
+   - fetch the latest panel source
+   - deploy the Worker and bind it to the database
+4. You receive the final panel URL
 
-۴. **Deploy** را بزنید و روی لینک `*.workers.dev` دیپلویر کلیک کنید
+> The deployer is **idempotent**: running it again on the same account reuses the
+> existing Worker and database instead of creating duplicates.
 
-### گام ۲ — استقرار پنل
+### Step 3 — First login
 
-۱. در صفحه دیپلویر روی دکمه نارنجی **«دریافت توکن»** بزنید — به صفحه ساخت توکن کلودفلر با پرمیشن‌های آماده هدایت می‌شوید
+Open the panel URL — on first login you set a management password.
 
-۲. توکن را بسازید، کپی کنید و در دیپلویر paste کنید
-
-۳. دکمه **Deploy** را بزنید — دیپلویر به‌صورت خودکار:
-   - دیتابیس D1 می‌سازد
-   - آخرین نسخه پنل را از گیت‌هاب می‌گیرد
-   - Worker پنل را مستقر و به دیتابیس متصل می‌کند
-
-۴. لینک نهایی پنل به‌شکل `https://n-map-panel-xxxx.your-sub.workers.dev/panel` به شما داده می‌شود
-
-> **توجه امنیتی:** توکنی که در گام بالا می‌سازید به‌عنوان secret روی Worker شما ذخیره می‌شود و فقط در اکانت خودتان می‌ماند.
-
-### گام ۳ — اولین ورود
-
-۱. لینک `/panel` را باز کنید — در اولین ورود از شما خواسته می‌شود **رمز عبور مدیریت** تعیین کنید
-
-۲. رمز را تعیین کنید و وارد پنل شوید
-
-## نحوه افزودن اکانت API
-
-پنل به شما اجازه می‌دهد چند اکانت API را همزمان مدیریت کنید:
-
-۱. در نوار ابزار بالای پنل روی آیکون **«اکانت‌های API»** کلیک کنید
-
-۲. پلتفرم (**Cloudflare** یا **Vercel**) را انتخاب کنید
-
-۳. روی دکمه نارنجی **«دریافت توکن»** بزنید — به صفحه ساخت توکن با پرمیشن‌های آماده هدایت می‌شوید
-
-۴. یک نام دلخواه بگذارید و توکن را paste کنید
-
-۵. روی **«اعتبارسنجی و ثبت اکانت»** بزنید — توکن قبل از ذخیره به‌صورت خودکار اعتبارسنجی می‌شود
-
-> اولین اکانت به‌طور خودکار **«اصلی»** می‌شود و برای زیرساخت استفاده می‌شود. اکانت‌های بعدی **«ثانویه»** هستند و فقط از ریکوئست رایگان روزانه پلتفرم بهره می‌برند. با دکمه **«اصلی کن»** می‌توانید هر زمان اکانت اصلی را عوض کنید.
-
-## توسعه محلی (اختیاری)
-
-برای تست و توسعه محلی به [Wrangler](https://developers.cloudflare.com/workers/wrangler/) نیاز دارید:
+## Local development
 
 ```bash
 git clone https://github.com/nikvpn-iran/n-map.git
@@ -94,49 +69,16 @@ cd n-map
 npx wrangler dev n-map.js --local --port 8787
 ```
 
-پنل روی `http://127.0.0.1:8787/panel` اجرا می‌شود. در حالت `--local` دیتابیس D1 به‌صورت محلی شبیه‌سازی می‌شود.
+The panel runs at `http://127.0.0.1:8787/panel`.
 
-## API
+## Project structure
 
-| متد | مسیر | عملکرد |
-|-----|------|--------|
-| `POST` | `/api/setup-password` | تعیین رمز در اولین ورود |
-| `POST` | `/api/login` | ورود |
-| `POST` | `/api/logout` | خروج |
-| `GET` `POST` | `/api/accounts` | لیست / افزودن اکانت API |
-| `PUT` `DELETE` | `/api/accounts/:id` | تنظیم اصلی / حذف اکانت |
-| `POST` | `/api/accounts/verify` | اعتبارسنجی توکن |
-| `GET` `POST` `PUT` `DELETE` | `/api/users` | مدیریت کاربران |
-| `POST` | `/api/change-password` | تغییر رمز مدیریت |
-| `POST` | `/api/update-panel` | آپدیت خودکار پنل |
-| `GET` | `/sub/:id` `/feed/:id` | لینک ساب کاربر |
-
-## تکنولوژی‌ها
-
-Cloudflare Workers &bull; D1 (SQLite) &bull; JavaScript (ES Modules) &bull; Tailwind CSS (CDN) &bull; WebSocket
-
-## ساختار پروژه
-
-| فایل | نقش |
+| File | Role |
 |------|------|
-| `n-map.js` | Worker اصلی — پنل، API، دیتابیس و پروکسی (تک‌فایلی) |
-| `n-map-deployer.js` | دیپلویر یک‌کلیکی — ساخت Worker و D1 |
-| `wrangler.toml` | تنظیمات Worker برای اجرای محلی |
-| `proxy/` | مخزن پروکسی به تفکیک کشور |
-| `ips.txt` | مخزن آیپی تمیز کلودفلر |
+| `n-map.js` | Main Worker — panel, API and database (single file) |
+| `n-map-deployer.js` | One-click deployer |
+| `wrangler.toml` | Worker config for local development |
 
-## مشارکت
-
-از Pull Request استقبال می‌کنیم. Fork کنید، برنچ بسازید، تغییرات را Push کنید.
-
-## لایسنس
+## License
 
 [MIT](LICENSE)
-
----
-
-<div align="center">
-
-ساخته شده توسط [NikVPN](https://github.com/nikvpn-iran) &bull; [کانال تلگرام](https://t.me/nikvpn)
-
-</div>
