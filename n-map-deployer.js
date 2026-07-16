@@ -133,7 +133,8 @@ export default {
 				const nmapCode = buildWorkerScript(await githubRes.text());
 				const metadata = {
 					main_module: "n-map.js",
-					compatibility_date: "2024-02-08",
+					compatibility_date: "2024-09-23",
+					compatibility_flags: ["allow_eval"],
 					bindings: [
 						{ type: "d1", name: "DB", id: dbUuid },
 						{ type: "secret_text", name: "CF_API_TOKEN", text: token },
@@ -276,7 +277,8 @@ export default {
 				}
 				const metadata = {
 					main_module: "n-map.js",
-					compatibility_date: "2024-02-08",
+					compatibility_date: "2024-09-23",
+					compatibility_flags: ["allow_eval"],
 					bindings: newBindings,
 				};
 				const formData = new FormData();
@@ -352,7 +354,8 @@ if (request.method === "POST" && url.pathname === "/api/reset-password") {
 		}
 		const metadata = {
 			main_module: "n-map.js",
-			compatibility_date: "2024-02-08",
+			compatibility_date: "2024-09-23",
+			compatibility_flags: ["allow_eval"],
 			bindings: newBindings,
 		};
 		const formData = new FormData();

@@ -591,7 +591,8 @@ const Router = {
 				}
 				const metadata = {
 					main_module: "n-map.js",
-					compatibility_date: "2024-02-08",
+					compatibility_date: "2024-09-23",
+					compatibility_flags: ["allow_eval"],
 					bindings: newBindings,
 				};
 				const formData = new FormData();
