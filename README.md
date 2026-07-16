@@ -40,8 +40,8 @@ Worker and the D1 database for you and returns the final panel URL.
 ### Step 1 — Create the deployer Worker
 
 1. Open the Cloudflare dashboard → **Workers & Pages** → **Create Worker**
-2. Give it any name, create it, then click **Edit code**
-3. Copy the contents of [`n-map-deployer.js`](n-map-deployer.js) and paste it in place of the default code
+2. Pick the **Hello World** template, give it any name, and deploy it
+3. Click **Edit code**, delete the default code, and paste in the contents of [`n-map-deployer.js`](n-map-deployer.js)
 4. Click **Deploy** and open the `*.workers.dev` link
 
 ### Step 2 — Deploy the panel

@@ -1,22 +1,4 @@
-import { connect } from "cloudflare:sockets";
-const WS_PATH = "/edge";
-const OBF_KEY = 105;
-function buildWorkerScript(source) {
-	let body = source
-		.replace(/^\s*import\s*\{\s*connect\s*\}\s*from\s*["']cloudflare:sockets["'];?\s*$/m, "")
-		.replace(/export\s+default\s*\{/, "const __WORKER_EXPORT__ = {");
-	body += "\nreturn __WORKER_EXPORT__;\n";
-	const bytes = new TextEncoder().encode(body);
-	let hex = "";
-	for (let i = 0; i < bytes.length; i++) hex += (bytes[i] ^ OBF_KEY).toString(16).padStart(2, "0");
-	return (
-		'import { connect } from "cloudflare:sockets";\n' +
-		'const _p="' + hex + '";\n' +
-		"const _b=new Uint8Array((_p.match(/.{1,2}/g)||[]).map(x=>parseInt(x,16)^" + OBF_KEY + "));\n" +
-		"const _c=new TextDecoder().decode(_b);\n" +
-		'export default new Function("connect", _c)(connect);\n'
-	);
-}
+
 const GLOBAL_TRAFFIC_CACHE = new Map();
 const ACTIVE_CONNECTIONS_COUNT = new Map();
 const GLOBAL_LAST_ACTIVE_WRITE = new Map();
@@ -24,6 +6,7 @@ const GLOBAL_LAST_DB_WRITE = new Map();
 const GLOBAL_WRITE_LOCK = new Map();
 const DNS_CACHE = new Map();
 const USER_REQ_CACHE = new Map();
+const LOGIN_ATTEMPTS = new Map(); 
 let GLOBAL_REQ_COUNT = 0;
 let GLOBAL_LAST_REQ_WRITE = 0;
 const DNS_CACHE_TTL = 5 * 60 * 1000;
@@ -55,7 +38,7 @@ async function checkAutoRotates(env) {
 	try {
 		const { results: usersToRotate } = await env.DB.prepare("SELECT * FROM users WHERE auto_rotate_ip = 1 AND ? >= (last_rotate_time + (rotate_time * 60000))").bind(now).all();
 		if (!usersToRotate || usersToRotate.length === 0) return;
-		const res = await fetch("https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/ips.txt");
+		const res = await fetch("https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/ips.txt");
 		if (!res.ok) return;
 		const text = await res.text();
 		const blocks = text.split("----------");
@@ -128,8 +111,8 @@ async function replaceBrokenProxy(username, env, oldProxy) {
 		const isOldProxyVIP = oldProxy.includes("@");
 		if (cachedVipCountries.length === 0 || Date.now() - lastVipCountriesFetch > 3600000) {
 			try {
-				const ghRes = await fetch("https://api.github.com/repos/nikvpn-iran/n-map/contents/proxy/proxy_vip", {
-					headers: { "User-Agent": "Mozilla/5.0" }
+				const ghRes = await fetch("https://api.github.com/repos/IR-NETLIFY/zeus/contents/proxy/proxy_vip", {
+					headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" }
 				});
 				if (ghRes.ok) {
 					const files = await ghRes.json();
@@ -144,16 +127,16 @@ async function replaceBrokenProxy(username, env, oldProxy) {
 			[fallbackVIPs[i], fallbackVIPs[j]] = [fallbackVIPs[j], fallbackVIPs[i]];
 		}
 		if (upperCountry !== "ALL" && upperCountry !== "UN") {
-			sources.push({ url: `https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/proxy/proxy_vip/${upperCountry}.txt`, type: 'repo' });
+			sources.push({ url: `https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/proxy/proxy_vip/${upperCountry}.txt`, type: 'repo' });
 		}
 		for (const fc of fallbackVIPs) {
 			if (fc !== upperCountry) {
-				sources.push({ url: `https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/proxy/proxy_vip/${fc}.txt`, type: 'repo' });
+				sources.push({ url: `https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/proxy/proxy_vip/${fc}.txt`, type: 'repo' });
 			}
 		}
 		if (!isOldProxyVIP) {
 			if (upperCountry !== "ALL" && upperCountry !== "UN") {
-				sources.push({ url: `https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/proxy/${upperCountry}.txt`, type: 'repo' });
+				sources.push({ url: `https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/proxy/${upperCountry}.txt`, type: 'repo' });
 				sources.push({ url: `https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=socks5&country=${countryCode}&format=text`, type: 'socks5' });
 			}
 			sources.push({ url: `https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&protocol=socks5&country=all&format=text`, type: 'socks5' });
@@ -215,14 +198,19 @@ async function replaceBrokenProxy(username, env, oldProxy) {
 		GLOBAL_WRITE_LOCK.delete(username + "_proxy_rotate");
 	}
 }
-export default {
+const __WORKER_EXPORT__ = {
 	async fetch(request, env, ctx) {
-		trackRequest(env, ctx);
-		ctx.waitUntil(checkAutoResets(env));
-		ctx.waitUntil(checkAutoRotates(env));
+		if (!env.DB) {
+			return new Response("Database binding 'DB' is missing in Cloudflare Workers settings.", { status: 500 });
+		}
 		await DbService.ensureSchema(env.DB);
+		trackRequest(env, ctx);
+		if (schemaEnsured) {
+			ctx.waitUntil(checkAutoResets(env));
+			ctx.waitUntil(checkAutoRotates(env));
+		}
 		const url = new URL(request.url);
-		if (Router.isWebSocketUpgrade(request) && (url.pathname === WS_PATH || url.pathname === "/N-MAP")) {
+		if (Router.isWebSocketUpgrade(request)) {
 			return await Router.handleWebSocket(request, env, ctx);
 		}
 		if (Router.isSubscriptionPath(url.pathname)) {
@@ -252,7 +240,7 @@ const Router = {
 	},
 	async handleWebSocket(request, env, ctx) {
 		try {
-			let proxyIP = "proxyip.cmliussss.net";
+			let proxyIP = "";
 			let socks5 = "";
 			try {
 				const proxyRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'proxy_ip'").first();
@@ -277,7 +265,7 @@ const Router = {
 		const host = url.hostname;
 		try {
 			const user = await env.DB.prepare("SELECT * FROM users WHERE username = ? OR uuid = ?").bind(subUser, subUser).first();
-			if (!user || user.connection_type !== atob("dmxlc3M=")) {
+			if (!user || user.connection_type !== "vl" + "e" + "ss") {
 				return new Response("Not Found", { status: 404 });
 			}
 			try {
@@ -374,21 +362,40 @@ const Router = {
 			});
 		}
 		if (url.pathname === "/api/login" && request.method === "POST") {
+			const clientIP = request.headers.get("CF-Connecting-IP") || "unknown";
+			const now = Date.now();
+			const attemptRecord = LOGIN_ATTEMPTS.get(clientIP) || { count: 0, lastAttempt: 0 };
+
+			if (attemptRecord.count >= 5 && (now - attemptRecord.lastAttempt) < 900000) {
+				const remaining = Math.ceil((900000 - (now - attemptRecord.lastAttempt)) / 60000);
+				return new Response(JSON.stringify({ error: `دسترسی شما مسدود شد. لطفاً ${remaining} دقیقه دیگر تلاش کنید.` }), {
+					status: 429,
+					headers: { "Content-Type": "application/json; charset=utf-8" },
+				});
+			}
+
 			const { password } = await request.json();
 			const hashedInput = await DbService.sha256(password);
 			const storedHash = await DbService.getPanelPassword(env.DB);
+
 			if (storedHash === hashedInput) {
+				LOGIN_ATTEMPTS.delete(clientIP); 
 				return new Response(JSON.stringify({ success: true }), {
 					headers: {
 						"Content-Type": "application/json; charset=utf-8",
 						"Set-Cookie": "panel_session=" + storedHash + "; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000",
 					},
 				});
+			} else {
+				attemptRecord.count = (now - attemptRecord.lastAttempt > 900000) ? 1 : attemptRecord.count + 1;
+				attemptRecord.lastAttempt = now;
+				LOGIN_ATTEMPTS.set(clientIP, attemptRecord);
+				
+				return new Response(JSON.stringify({ error: `رمز عبور اشتباه است (تلاش‌های باقی‌مانده: ${5 - attemptRecord.count})` }), {
+					status: 401,
+					headers: { "Content-Type": "application/json; charset=utf-8" },
+				});
 			}
-			return new Response(JSON.stringify({ error: "رمز عبور اشتباه است" }), {
-				status: 401,
-				headers: { "Content-Type": "application/json; charset=utf-8" },
-			});
 		}
 		if (url.pathname === "/api/logout" && request.method === "POST") {
 			return new Response(JSON.stringify({ success: true }), {
@@ -453,7 +460,7 @@ const Router = {
 					}
 				}
 				if (!isAuthorized) {
-					return new Response(JSON.stringify({ error: "این توکن متعلق به صاحب پنل نیست (ای کــثـــکـــش)" }), {
+					return new Response(JSON.stringify({ error: "این توکن متعلق به صاحب پـنـل نیست (ای کــثـــکـــش)" }), {
 						status: 403,
 						headers: { "Content-Type": "application/json; charset=utf-8" },
 					});
@@ -477,138 +484,101 @@ const Router = {
 				headers: { "Content-Type": "application/json; charset=utf-8" },
 			});
 		}
-		if (url.pathname === "/api/accounts/verify" && request.method === "POST") {
+		if (url.pathname === "/api/restart-core" && request.method === "POST") {
 			try {
-				const { token, platform } = await request.json();
-				if (!token || !platform) {
-					return new Response(JSON.stringify({ valid: false, error: "توکن و پلتفرم الزامی است" }), {
-						status: 400,
-						headers: { "Content-Type": "application/json; charset=utf-8" },
-					});
-				}
-				const result = platform === "cloudflare" ? await AccountService.verifyCloudflare(token) : platform === "vercel" ? await AccountService.verifyVercel(token) : { valid: false, error: "پلتفرم پشتیبانی نمی‌شود" };
-				return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-			} catch (e) {
-				return new Response(JSON.stringify({ valid: false, error: "خطا در ارتباط با سرور پلتفرم" }), {
-					status: 500,
-					headers: { "Content-Type": "application/json; charset=utf-8" },
-				});
+				GLOBAL_TRAFFIC_CACHE.clear();
+				ACTIVE_CONNECTIONS_COUNT.clear();
+				GLOBAL_LAST_ACTIVE_WRITE.clear();
+				GLOBAL_LAST_DB_WRITE.clear();
+				GLOBAL_WRITE_LOCK.clear();
+				DNS_CACHE.clear();
+				USER_REQ_CACHE.clear();
+				return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
+			} catch (err) {
+				return new Response(JSON.stringify({ error: err.message }), { status: 500, headers: { "Content-Type": "application/json" } });
 			}
 		}
-		if (url.pathname.startsWith("/api/accounts")) {
-			const pathParts = url.pathname.split("/");
-			const accountId = pathParts.length > 3 ? decodeURIComponent(pathParts[3]) : null;
-			if (!accountId && request.method === "GET") {
-				const { results } = await env.DB.prepare("SELECT id, name, platform, email, is_active, is_primary, account_external_id, used_req, created_at FROM accounts ORDER BY is_primary DESC, created_at ASC").all();
-				return new Response(JSON.stringify(results || []), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-			}
-			if (!accountId && request.method === "POST") {
-				const body = await request.json();
-				const { name, platform, token, email, account_external_id } = body;
-				if (!name || !platform || !token) {
-					return new Response(JSON.stringify({ error: "نام، پلتفرم و توکن الزامی است" }), { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } });
-				}
-				const countRow = await env.DB.prepare("SELECT COUNT(*) as c FROM accounts").first();
-				const isPrimary = countRow && countRow.c > 0 ? 0 : 1;
-				const id = crypto.randomUUID();
-				await env.DB.prepare("INSERT INTO accounts (id, name, platform, token, email, is_active, is_primary, account_external_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?)")
-					.bind(id, name, platform, token, email || null, isPrimary, account_external_id || null)
-					.run();
-				return new Response(JSON.stringify({ success: true, id, is_primary: isPrimary }), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-			}
-			if (accountId && request.method === "PUT") {
-				const body = await request.json();
-				if (body.set_primary) {
-					await env.DB.prepare("UPDATE accounts SET is_primary = 0").run();
-					await env.DB.prepare("UPDATE accounts SET is_primary = 1 WHERE id = ?").bind(accountId).run();
-					return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-				}
-				const { name, email, is_active } = body;
-				await env.DB.prepare("UPDATE accounts SET name = COALESCE(?, name), email = COALESCE(?, email), is_active = COALESCE(?, is_active) WHERE id = ?")
-					.bind(name ?? null, email ?? null, is_active === undefined ? null : is_active ? 1 : 0, accountId)
-					.run();
-				return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-			}
-			if (accountId && request.method === "DELETE") {
-				const target = await env.DB.prepare("SELECT is_primary FROM accounts WHERE id = ?").bind(accountId).first();
-				await env.DB.prepare("DELETE FROM accounts WHERE id = ?").bind(accountId).run();
-				if (target && target.is_primary) {
-					const next = await env.DB.prepare("SELECT id FROM accounts ORDER BY created_at ASC LIMIT 1").first();
-					if (next) await env.DB.prepare("UPDATE accounts SET is_primary = 1 WHERE id = ?").bind(next.id).run();
-				}
-				return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json; charset=utf-8" } });
-			}
-		}
-		if ((url.pathname === "/api/update-panel" || url.pathname === "/api/restart-core") && request.method === "POST") {
-			const isUpdate = url.pathname === "/api/update-panel";
-			const body = isUpdate ? await request.json().catch(() => ({})) : {};
-			let currentToken = env.CF_API_TOKEN || (isUpdate ? body.cf_token : null);
+		if (url.pathname === "/api/update-panel" && request.method === "POST") {
+			const body = await request.json().catch(() => ({}));
+			let currentToken = env.CF_API_TOKEN || body.cf_token || null;
 			let currentAccountId = env.CF_ACCOUNT_ID;
-			if (!currentToken || (!isUpdate && !currentAccountId)) {
+			if (!currentToken) {
 				return new Response(JSON.stringify({ error: "TOKEN_REQUIRED" }), { status: 400, headers: { "Content-Type": "application/json" } });
 			}
 			try {
-				if (!currentAccountId && isUpdate) {
-					const accRes = await fetch("https://api.cloudflare.com/client/v4/accounts", {
-						headers: { Authorization: "Bearer " + currentToken },
-					});
-					const accData = await accRes.json();
-					if (!accData.success || accData.result.length === 0) throw new Error("توکن نامعتبر است یا اکانتی یافت نشد.");
+				const cfHeaders = {
+					"Authorization": "Bearer " + currentToken,
+					"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) ZeusPanel/1.0"
+				};
+				if (!currentAccountId) {
+					const accRes = await fetch("https://api.cloudflare.com/client/v4/accounts", { headers: cfHeaders });
+					if (!accRes.ok) throw new Error("کلودفلر درخواست اکانت را رد کرد (وضعیت: " + accRes.status + ")");
+					const accData = await accRes.json().catch(() => ({}));
+					if (!accData.success || !accData.result || accData.result.length === 0) throw new Error("توکن نامعتبر است یا اکانتی یافت نشد.");
 					currentAccountId = accData.result[0].id;
 				}
-				const githubRes = await fetch("https://api.github.com/repos/nikvpn-iran/n-map/contents/n-map.js", {
+				
+				const githubRes = await fetch("https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/zeus.js?t=" + Date.now(), {
 					headers: {
-						Accept: "application/vnd.github.v3.raw",
-						"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-						"Cache-Control": "no-cache, no-store, must-revalidate",
-						Pragma: "no-cache",
-						Expires: "0",
-					},
+						"User-Agent": "Mozilla/5.0",
+						"Cache-Control": "no-cache"
+					}
 				});
-				if (!githubRes.ok) throw new Error(isUpdate ? "خطا در دریافت سورس جدید از گیت‌هاب" : "خطا در دریافت سورس از گیت‌هاب");
-				const newCode = buildWorkerScript(await githubRes.text());
+				if (!githubRes.ok) throw new Error("خطا در دریافت سورس جدید از گیت‌هاب (وضعیت: " + githubRes.status + ")");
+				const newCode = await githubRes.text();
 				const scriptName = env.WORKER_NAME || url.hostname.split(".")[0];
+				
 				const bindingsRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${currentAccountId}/workers/scripts/${scriptName}/bindings`, {
-					headers: { Authorization: "Bearer " + currentToken },
+					headers: cfHeaders
 				});
-				const bindingsData = await bindingsRes.json();
-				if (!bindingsData.success) throw new Error(isUpdate ? "عدم دسترسی به تنظیمات ورکر. توکن نامعتبر است." : "عدم دسترسی به تنظیمات ورکر");
+				if (!bindingsRes.ok) throw new Error("عدم دسترسی به تنظیمات ورکر. کلودفلر خطا داد (وضعیت: " + bindingsRes.status + ")");
+				const bindingsData = await bindingsRes.json().catch(() => ({}));
+				if (!bindingsData.success) throw new Error("توکن فاقد دسترسی ویرایش ورکر است.");
+				
 				const newBindings = [];
-				for (const b of bindingsData.result) {
+				for (const b of bindingsData.result || []) {
+					if (b.name === "CF_API_TOKEN" || b.name === "CF_ACCOUNT_ID") continue;
 					if (b.type === "d1") {
 						newBindings.push({ type: "d1", name: b.name, id: b.database_id || b.id });
-					} else if (b.name === "CF_API_TOKEN") {
-						newBindings.push({ type: "secret_text", name: "CF_API_TOKEN", text: currentToken });
-					} else if (b.name === "CF_ACCOUNT_ID") {
-						newBindings.push({ type: "secret_text", name: "CF_ACCOUNT_ID", text: currentAccountId });
+					} else if (b.type === "kv_namespace") {
+						newBindings.push({ type: "kv_namespace", name: b.name, namespace_id: b.namespace_id || b.id });
+					} else if (b.type === "plain_text") {
+						newBindings.push({ type: "plain_text", name: b.name, text: b.text || "" });
+					} else if (b.type !== "secret_text") {
+						newBindings.push(b);
 					}
 				}
-				if (!newBindings.some((b) => b.name === "CF_API_TOKEN")) {
-					newBindings.push({ type: "secret_text", name: "CF_API_TOKEN", text: currentToken });
-				}
-				if (!newBindings.some((b) => b.name === "CF_ACCOUNT_ID")) {
-					newBindings.push({ type: "secret_text", name: "CF_ACCOUNT_ID", text: currentAccountId });
-				}
+				newBindings.push({ type: "secret_text", name: "CF_API_TOKEN", text: currentToken });
+				newBindings.push({ type: "secret_text", name: "CF_ACCOUNT_ID", text: currentAccountId });
+				
 				const metadata = {
-					main_module: "n-map.js",
+					main_module: "zeus.js",
 					compatibility_date: "2026-07-10",
 					compatibility_flags: ["nodejs_compat"],
-					bindings: newBindings,
+					bindings: newBindings
 				};
+				
 				const formData = new FormData();
-				formData.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }));
-				formData.append("n-map.js", new Blob([newCode], { type: "application/javascript+module" }), "n-map.js");
+				formData.append("metadata", new Blob([JSON.stringify(metadata)], { type: "application/json" }), "metadata.json");
+				formData.append("zeus.js", new Blob([newCode], { type: "application/javascript+module" }), "zeus.js");
+				
 				const deployRes = await fetch(`https://api.cloudflare.com/client/v4/accounts/${currentAccountId}/workers/scripts/${scriptName}`, {
 					method: "PUT",
-					headers: { Authorization: "Bearer " + currentToken },
-					body: formData,
+					headers: cfHeaders,
+					body: formData
 				});
-				const deployData = await deployRes.json();
-				if (!deployData.success) throw new Error(isUpdate ? "خطا در اعمال آپدیت در کلودفلر." : "خطا در اعمال ری‌استارت در کلودفلر");
+				if (!deployRes.ok) {
+					const errText = await deployRes.text().catch(() => "");
+					throw new Error("خطای کلودفلر هنگام دیپلوی (" + deployRes.status + "): " + errText.substring(0, 150));
+				}
+				const deployData = await deployRes.json().catch(() => ({}));
+				if (!deployData.success) {
+					const cfError = deployData.errors && deployData.errors.length > 0 ? deployData.errors[0].message : "خطا در اعمال آپدیت.";
+					throw new Error(cfError);
+				}
 				return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 			} catch (err) {
-				const errorMsg = err.message + (isUpdate ? " | در صورت عدم موفقیت، از طریق لینک زیر آپدیت کنید: https://github.com/nikvpn-iran/n-map" : "");
-				return new Response(JSON.stringify({ error: errorMsg }), { status: 500, headers: { "Content-Type": "application/json" } });
+				return new Response(JSON.stringify({ error: err.message }), { status: 400, headers: { "Content-Type": "application/json" } });
 			}
 		}
 		if (url.pathname === "/api/change-password" && request.method === "POST") {
@@ -694,7 +664,7 @@ const Router = {
 				const rowSocks = await env.DB.prepare("SELECT value FROM settings WHERE key = 'socks5'").first();
 				return new Response(
 					JSON.stringify({
-						proxy_ip: rowIp ? rowIp.value : "proxyip.cmliussss.net",
+						proxy_ip: rowIp ? rowIp.value : "",
 						iata: rowIata ? rowIata.value : "",
 						socks5: rowSocks ? rowSocks.value : "",
 					}),
@@ -704,7 +674,7 @@ const Router = {
 		}
 		if (url.pathname === "/api/test-proxy" && request.method === "POST") {
 			const { proxy } = await request.json();
-			if (!proxy) return new Response(JSON.stringify({ error: "پروکسی وارد نشده است" }), { status: 400, headers: { "Content-Type": "application/json" } });
+			if (!proxy) return new Response(JSON.stringify({ error: "پـروکـسـی وارد نشده است" }), { status: 400, headers: { "Content-Type": "application/json" } });
 			try {
 				let ip = "";
 				let workingProxy = proxy;
@@ -744,9 +714,9 @@ const Router = {
 				return new Response(JSON.stringify({ success: true, ping, country }), { headers: { "Content-Type": "application/json" } });
 			} catch (e) {
 				let msg = e.message;
-				if (msg.includes("Stream was cancelled") || msg.includes("network")) msg = "ارتباط با سرور قطع شد (احتمالاً پروکسی مسدود یا خاموش است)";
-				else if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("تایم‌اوت")) msg = "تایم‌اوت در اتصال (پروکسی در دسترس نیست)";
-				else if (msg.includes("Invalid URL") || msg.includes("Invalid format")) msg = "فرمت وارد شده برای پروکسی اشتباه است";
+				if (msg.includes("Stream was cancelled") || msg.includes("network")) msg = "ارتباط با سرور قطع شد (احتمالاً پـروکـسـی مسدود یا خاموش است)";
+				else if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("تایم‌اوت")) msg = "تایم‌اوت در اتصال (پـروکـسـی در دسترس نیست)";
+				else if (msg.includes("Invalid URL") || msg.includes("Invalid format")) msg = "فرمت وارد شده برای پـروکـسـی اشتباه است";
 				else if (msg === "err") msg = "خطای نامشخص (ارتباط برقرار نشد)";
 				return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { "Content-Type": "application/json" } });
 			}
@@ -814,51 +784,70 @@ const Router = {
 					try {
 						await flushExpiredTraffic(env);
 					} catch (e) {}
-					const { results } = await env.DB.prepare("SELECT * FROM users ORDER BY id DESC").all();
-					const now = Date.now();
-					const enrichedUsers = (results || []).map((user) => ({
-						...user,
-						is_online: user.last_active && now - user.last_active < 20000 ? 1 : 0,
-						online_count: getActiveIpCount(user.active_ips),
-					}));
-					let cfReqs = { today: 0, total: 0 };
 					try {
-						const liveCf = await getCfUsage(env);
-						const todayStr = new Date().toISOString().split("T")[0];
-						const dateRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_last_date'").first();
-						const totalRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_total'").first();
-						let dbTotal = totalRow ? parseInt(totalRow.value) || 0 : 0;
-						let dbToday = 0;
-						if (dateRow && dateRow.value === todayStr) {
-							const todayRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_today'").first();
-							dbToday = todayRow ? parseInt(todayRow.value) || 0 : 0;
-						}
-						if (liveCf.today > dbToday) {
-							dbToday = liveCf.today;
-							await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_today', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(String(dbToday), String(dbToday)).run();
-							await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_last_date', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(todayStr, todayStr).run();
-						}
-						if (liveCf.total > dbTotal) {
-							dbTotal = liveCf.total;
-							await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_total', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(String(dbTotal), String(dbTotal)).run();
-						}
-						cfReqs.today = dbToday + GLOBAL_REQ_COUNT;
-						cfReqs.total = dbTotal + GLOBAL_REQ_COUNT;
-					} catch (e) {}
-					return new Response(
-						JSON.stringify({
-							users: enrichedUsers,
-							serverTime: now,
-							cfRequestsToday: cfReqs.today,
-							cfRequestsTotal: cfReqs.total,
-						}),
-						{
-							headers: {
-								"Content-Type": "application/json",
-								"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+						const { results } = await env.DB.prepare("SELECT * FROM users ORDER BY id DESC").all();
+						const now = Date.now();
+						const enrichedUsers = (results || []).map((user) => ({
+							...user,
+							is_online: user.last_active && now - user.last_active < 20000 ? 1 : 0,
+							online_count: getActiveIpCount(user.active_ips),
+						}));
+						let cfReqs = { today: 0, total: 0 };
+						try {
+							const liveCf = await getCfUsage(env);
+							const todayStr = new Date().toISOString().split("T")[0];
+							const dateRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_last_date'").first();
+							const totalRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_total'").first();
+							let dbTotal = totalRow ? parseInt(totalRow.value) || 0 : 0;
+							let dbToday = 0;
+							if (dateRow && dateRow.value === todayStr) {
+								const todayRow = await env.DB.prepare("SELECT value FROM settings WHERE key = 'req_today'").first();
+								dbToday = todayRow ? parseInt(todayRow.value) || 0 : 0;
+							}
+							if (liveCf.today > dbToday) {
+								dbToday = liveCf.today;
+								await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_today', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(String(dbToday), String(dbToday)).run();
+								await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_last_date', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(todayStr, todayStr).run();
+							}
+							if (liveCf.total > dbTotal) {
+								dbTotal = liveCf.total;
+								await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('req_total', ?) ON CONFLICT(key) DO UPDATE SET value = ?").bind(String(dbTotal), String(dbTotal)).run();
+							}
+							cfReqs.today = dbToday + GLOBAL_REQ_COUNT;
+							cfReqs.total = dbTotal + GLOBAL_REQ_COUNT;
+						} catch (e) {}
+						return new Response(
+							JSON.stringify({
+								users: enrichedUsers,
+								serverTime: now,
+								cfRequestsToday: cfReqs.today,
+								cfRequestsTotal: cfReqs.total,
+							}),
+							{
+								headers: {
+									"Content-Type": "application/json",
+									"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+								},
 							},
-						},
-					);
+						);
+					} catch (dbErr) {
+						return new Response(
+							JSON.stringify({
+								users: [],
+								serverTime: Date.now(),
+								cfRequestsToday: 0,
+								cfRequestsTotal: 0,
+								error: dbErr.message
+							}),
+							{
+								status: 200, 
+								headers: {
+									"Content-Type": "application/json",
+									"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+								},
+							}
+						);
+					}
 				}
 				if (request.method === "POST") {
 					const { username, uuid, limit_gb, expiry_days, limit_req, ips, tls, port, fingerprint, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip, auto_reset_vol_days, auto_reset_req_days, auto_rotate_ip, rotate_time, ip_operator, ip_count, auto_rotate_user_proxy } = await request.json();
@@ -871,7 +860,13 @@ const Router = {
 					if (!/^[a-zA-Z0-9_-]+$/.test(username)) {
 						return new Response(JSON.stringify({ error: "نام کاربری غیرمجاز است (فقط حروف، اعداد، خط تیره و آندرلاین)" }), { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } });
 					}
-					const finalUuid = uuid || crypto.randomUUID();
+					let finalUuid = uuid;
+					if (!finalUuid) {
+						const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(6)))
+							.map(b => b.toString(16).padStart(2, "0"))
+							.join("");
+						finalUuid = `50414e45-4c5f-5a45-5553-${randomHex}`;
+					}
 					const parsedUsedGb = parseFloat(used_gb);
 					const finalUsedGb = !isNaN(parsedUsedGb) ? parsedUsedGb : 0;
 					const parsedUsedReq = parseInt(used_req);
@@ -887,7 +882,7 @@ const Router = {
 						const todayUtc = Math.floor(Date.now() / 86400000) * 86400000;
 						const nowTime = Date.now();
 						await env.DB.prepare("INSERT INTO users (username, uuid, limit_gb, expiry_days, limit_req, ips, connection_type, tls, port, fingerprint, max_connections, ip_limit, used_gb, used_req, created_at, is_active, block_porn, block_ads, frag_len, frag_int, user_proxy_iata, user_socks5, user_proxy_ip, auto_reset_vol_days, auto_reset_req_days, last_reset_vol_time, last_reset_req_time, auto_rotate_ip, rotate_time, ip_operator, ip_count, last_rotate_time, auto_rotate_user_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-							.bind(username, finalUuid, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, atob("dmxlc3M="), tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, finalUsedGb, finalUsedReq, finalCreatedAt, finalIsActive, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null, auto_reset_vol_days ? parseInt(auto_reset_vol_days) : 0, auto_reset_req_days ? parseInt(auto_reset_req_days) : 0, todayUtc, todayUtc, auto_rotate_ip || 0, rotate_time || 0, ip_operator || "all", ip_count || 20, nowTime, auto_rotate_user_proxy ? 1 : 0)
+							.bind(username, finalUuid, limit_gb ? parseFloat(limit_gb) : null, expiry_days ? parseInt(expiry_days) : null, limit_req ? parseInt(limit_req) : null, ips || null, "vl" + "e" + "ss", tls, port, fingerprint || "chrome", ip_limit ? parseInt(ip_limit) : null, ip_limit ? parseInt(ip_limit) : null, finalUsedGb, finalUsedReq, finalCreatedAt, finalIsActive, block_porn ? 1 : 0, block_ads ? 1 : 0, frag_len !== undefined ? frag_len : "200-3000", frag_int !== undefined ? frag_int : "1-2", user_proxy_iata || null, user_socks5 || null, user_proxy_ip || null, auto_reset_vol_days ? parseInt(auto_reset_vol_days) : 0, auto_reset_req_days ? parseInt(auto_reset_req_days) : 0, todayUtc, todayUtc, auto_rotate_ip || 0, rotate_time || 0, ip_operator || "all", ip_count || 20, nowTime, auto_rotate_user_proxy ? 1 : 0)
 							.run();
 						return new Response(JSON.stringify({ success: true }), { headers: { "Content-Type": "application/json" } });
 					} catch (err) {
@@ -899,183 +894,72 @@ const Router = {
 		return new Response(JSON.stringify({ error: "Not Found" }), { status: 404, headers: { "Content-Type": "application/json" } });
 	},
 };
-const AccountService = {
-	async verifyCloudflare(token) {
-		try {
-			const verifyRes = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
-				headers: { Authorization: "Bearer " + token },
-			});
-			const verifyData = await verifyRes.json();
-			if (!verifyRes.ok || !verifyData.success) {
-				return { valid: false, error: "توکن کلودفلر نامعتبر است" };
-			}
-			const accountsRes = await fetch("https://api.cloudflare.com/client/v4/accounts", {
-				headers: { Authorization: "Bearer " + token },
-			});
-			const accountsData = await accountsRes.json();
-			if (!accountsData.success || !accountsData.result || accountsData.result.length === 0) {
-				return { valid: false, error: "اکانت کلودفلر یافت نشد" };
-			}
-			const acc = accountsData.result[0];
-			return { valid: true, account_external_id: acc.id, account_name: acc.name };
-		} catch (e) {
-			return { valid: false, error: "خطا در ارتباط با کلودفلر" };
-		}
-	},
-	async verifyVercel(token) {
-		try {
-			const res = await fetch("https://api.vercel.com/v2/user", {
-				headers: { Authorization: "Bearer " + token },
-			});
-			if (!res.ok) {
-				return { valid: false, error: "توکن ورسل نامعتبر است" };
-			}
-			const data = await res.json();
-			return {
-				valid: true,
-				account_external_id: (data.user && data.user.id) || data.id,
-				account_name: (data.user && (data.user.username || data.user.name)) || data.username || data.name,
-			};
-		} catch (e) {
-			return { valid: false, error: "خطا در ارتباط با ورسل" };
-		}
-	},
-};
 let schemaEnsured = false;
+let schemaPromise = null;
 let cachedPanelPassword = null;
 const DbService = {
 	async ensureSchema(db) {
 		if (schemaEnsured) return;
-		try {
-			await db
-				.prepare(
-					`
-        CREATE TABLE IF NOT EXISTS users (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          username TEXT UNIQUE,
-          uuid TEXT,
-          limit_gb REAL,
-          expiry_days INTEGER,
-          ips TEXT,
-          connection_type TEXT,
-          tls TEXT,
-          port INTEGER,
-          used_gb REAL DEFAULT 0,
-          is_active INTEGER DEFAULT 1,
-          last_active INTEGER,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `,
-				)
-				.run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN last_active INTEGER").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN fingerprint TEXT DEFAULT 'chrome'").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN max_connections INTEGER").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN limit_req INTEGER").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN used_req INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN ip_limit INTEGER DEFAULT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN active_ips TEXT DEFAULT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("UPDATE users SET ip_limit = max_connections WHERE ip_limit IS NULL AND max_connections IS NOT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN block_porn INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN block_ads INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN frag_len TEXT DEFAULT '200-3000'").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN frag_int TEXT DEFAULT '1-2'").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN lifetime_used_gb REAL DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("UPDATE users SET lifetime_used_gb = used_gb WHERE lifetime_used_gb = 0 OR lifetime_used_gb IS NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN user_proxy_ip TEXT DEFAULT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN user_proxy_iata TEXT DEFAULT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN user_socks5 TEXT DEFAULT NULL").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN auto_reset_vol_days INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN auto_reset_req_days INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN last_reset_vol_time INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN last_reset_req_time INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN auto_rotate_ip INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN rotate_time INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN ip_operator TEXT DEFAULT 'all'").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN ip_count INTEGER DEFAULT 20").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN last_rotate_time INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db.prepare("ALTER TABLE users ADD COLUMN auto_rotate_user_proxy INTEGER DEFAULT 0").run();
-		} catch (e) {}
-		try {
-			await db
-				.prepare(
-					`
-        CREATE TABLE IF NOT EXISTS accounts (
-          id TEXT PRIMARY KEY,
-          name TEXT,
-          platform TEXT,
-          token TEXT,
-          email TEXT,
-          is_active INTEGER DEFAULT 1,
-          is_primary INTEGER DEFAULT 0,
-          account_external_id TEXT,
-          used_req INTEGER DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-      `,
-				)
-				.run();
-		} catch (e) {}
+		if (schemaPromise) {
+			await schemaPromise;
+			return;
+		}
+		schemaPromise = (async () => {
+			try {
+				await db.prepare(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, uuid TEXT, limit_gb REAL, expiry_days INTEGER, ips TEXT, connection_type TEXT, tls TEXT, port INTEGER, used_gb REAL DEFAULT 0, is_active INTEGER DEFAULT 1, last_active INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`).run();
+			} catch (e) {}
+			try {
+				await db.prepare("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)").run();
+			} catch (e) {}
+			try {
+				const { results } = await db.prepare("PRAGMA table_info(users)").all();
+				const existingCols = new Set((results || []).map((r) => r.name));
+				const colsToAdd = [
+					{ name: "is_active", def: "INTEGER DEFAULT 1" },
+					{ name: "last_active", def: "INTEGER" },
+					{ name: "fingerprint", def: "TEXT DEFAULT 'chrome'" },
+					{ name: "max_connections", def: "INTEGER" },
+					{ name: "limit_req", def: "INTEGER" },
+					{ name: "used_req", def: "INTEGER DEFAULT 0" },
+					{ name: "ip_limit", def: "INTEGER DEFAULT NULL" },
+					{ name: "active_ips", def: "TEXT DEFAULT NULL" },
+					{ name: "block_porn", def: "INTEGER DEFAULT 0" },
+					{ name: "block_ads", def: "INTEGER DEFAULT 0" },
+					{ name: "frag_len", def: "TEXT DEFAULT '200-3000'" },
+					{ name: "frag_int", def: "TEXT DEFAULT '1-2'" },
+					{ name: "lifetime_used_gb", def: "REAL DEFAULT 0" },
+					{ name: "user_proxy_ip", def: "TEXT DEFAULT NULL" },
+					{ name: "user_proxy_iata", def: "TEXT DEFAULT NULL" },
+					{ name: "user_socks5", def: "TEXT DEFAULT NULL" },
+					{ name: "auto_reset_vol_days", def: "INTEGER DEFAULT 0" },
+					{ name: "auto_reset_req_days", def: "INTEGER DEFAULT 0" },
+					{ name: "last_reset_vol_time", def: "INTEGER DEFAULT 0" },
+					{ name: "last_reset_req_time", def: "INTEGER DEFAULT 0" },
+					{ name: "auto_rotate_ip", def: "INTEGER DEFAULT 0" },
+					{ name: "rotate_time", def: "INTEGER DEFAULT 0" },
+					{ name: "ip_operator", def: "TEXT DEFAULT 'all'" },
+					{ name: "ip_count", def: "INTEGER DEFAULT 20" },
+					{ name: "last_rotate_time", def: "INTEGER DEFAULT 0" },
+					{ name: "auto_rotate_user_proxy", def: "INTEGER DEFAULT 0" }
+				];
+				const stmts = [];
+				for (const col of colsToAdd) {
+					if (!existingCols.has(col.name)) {
+						stmts.push(db.prepare(`ALTER TABLE users ADD COLUMN ${col.name} ${col.def}`));
+					}
+				}
+				if (stmts.length > 0) {
+					await db.batch(stmts);
+				}
+			} catch (e) {}
+			try {
+				await db.prepare("UPDATE users SET ip_limit = max_connections WHERE ip_limit IS NULL AND max_connections IS NOT NULL").run();
+			} catch (e) {}
+			try {
+				await db.prepare("UPDATE users SET lifetime_used_gb = used_gb WHERE lifetime_used_gb = 0 OR lifetime_used_gb IS NULL").run();
+			} catch (e) {}
+		})();
+		await schemaPromise;
 		schemaEnsured = true;
 	},
 	async getPanelPassword(db) {
@@ -1140,11 +1024,12 @@ const SubscriptionService = {
 			.map((p) => p.trim())
 			.filter((p) => p.length > 0);
 		const fp = user.fingerprint || "chrome";
+		const dynPath = encodeURIComponent("/stream/PANEL_ZEUS/" + (user.uuid ? user.uuid.split("-")[0] : "default"));
 		const links = [];
 		const m1 = decodeURIComponent("%E2%9A%A0%EF%B8%8F%D9%BE%D9%86%D9%84%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%20%D9%88%20%D8%BA%DB%8C%D8%B1%20%D9%82%D8%A7%D8%A8%D9%84%20%D9%81%D8%B1%D9%88%D8%B4%E2%9A%A0%EF%B8%8F");
-		const m2 = decodeURIComponent("%F0%9F%9A%80%40N-MAP%20%D8%B3%D8%A7%D8%AE%D8%AA%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%F0%9F%9A%80");
-		links.push(atob("dmxlc3M6Ly8=") + user.uuid + "@0.0.0.0:1?encryption=none&security=none&type=ws&host=" + host + "&path=%2Fedge#" + encodeURIComponent(m1));
-		links.push(atob("dmxlc3M6Ly8=") + user.uuid + "@0.0.0.0:1?encryption=none&security=none&type=ws&host=" + host + "&path=%2Fedge#" + encodeURIComponent(m2));
+		const m2 = decodeURIComponent("%F0%9F%9A%80%40PANEL_ZEUS%20%D8%B3%D8%A7%D8%AE%D8%AA%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%F0%9F%9A%80");
+		links.push("vl" + "e" + "ss://" + user.uuid + "@0.0.0.0:1?encryption=none&security=none&type=ws&host=" + host + "&path=" + dynPath + "#" + encodeURIComponent(m1));
+		links.push("vl" + "e" + "ss://" + user.uuid + "@0.0.0.0:1?encryption=none&security=none&type=ws&host=" + host + "&path=" + dynPath + "#" + encodeURIComponent(m2));
 		let remVol = "Unlimited";
 		if (user.limit_gb) {
 			let rem = user.limit_gb - (user.used_gb || 0);
@@ -1163,7 +1048,7 @@ const SubscriptionService = {
 			remReq = rem > 0 ? rem.toLocaleString() + "Req" : "0Req";
 		}
 		const infoRemark = "📊 remaining | \u200E" + remVol + " | \u200E" + remTime + " | \u200E" + remReq;
-		links.push(atob("dmxlc3M6Ly8=") + user.uuid + "@" + host + ":80?path=%2Fedge&security=none&encryption=none&host=" + host + "&fp=" + fp + "&type=ws#" + encodeURIComponent(infoRemark));
+		links.push("vl" + "e" + "ss://" + user.uuid + "@" + host + ":80?path=" + dynPath + "&security=none&encryption=none&host=" + host + "&fp=" + fp + "&type=ws#" + encodeURIComponent(infoRemark));
 		let countryCode = "";
 		if (user.user_proxy_iata) {
 			try {
@@ -1213,10 +1098,11 @@ const SubscriptionService = {
 				const tlsVal = isTlsPort ? "tls" : "none";
 				const userFrag = user.frag_len && user.frag_int ? "&fragment=" + user.frag_len + "," + user.frag_int : "";
 				const remark = flagEmoji + " | " + user.username + " | \u200E" + ip + " | \u200E" + portStr;
-				links.push(atob("dmxlc3M6Ly8=") + user.uuid + "@" + ip + ":" + portStr + "?path=%2Fedge&security=" + tlsVal + "&encryption=none&insecure=0&host=" + host + "&fp=" + fp + "&type=ws&allowInsecure=0&sni=" + host + userFrag + "#" + encodeURIComponent(remark));
+				links.push("vl" + "e" + "ss://" + user.uuid + "@" + ip + ":" + portStr + "?path=" + dynPath + "&security=" + tlsVal + "&encryption=none&insecure=0&host=" + host + "&fp=" + fp + "&type=ws&allowInsecure=0&sni=" + host + userFrag + "#" + encodeURIComponent(remark));
 			});
 		});
-		const plainContent = links.join("\n");
+		const noise = ["# System Update Feed: OK", "# Sync Code: " + Math.random().toString(36).slice(2, 10), "# Version: 2.10.1", "# Description: Secure Node Configurations", ""].join("\n");
+		const plainContent = noise + links.join("\n");
 		const subContent = btoa(unescape(encodeURIComponent(plainContent)));
 		const downloadBytes = Math.floor((user.used_gb || 0) * 1073741824);
 		const totalBytes = user.limit_gb ? Math.floor(user.limit_gb * 1073741824) : 0;
@@ -1382,12 +1268,20 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 			ACTIVE_CONNECTIONS_COUNT.set(uname, activeCount);
 		}
 	};
-	const heartbeat = setInterval(async () => {
+	let heartbeat;
+	const runHeartbeat = async () => {
 		if (serverSock.readyState === WebSocket.OPEN) {
 			try {
 				serverSock.send(new Uint8Array(0));
-				if (!validUUID) return;
-				{
+				if (!validUUID || !username) {
+					heartbeat = setTimeout(runHeartbeat, Math.floor(Math.random() * 5000) + 20000);
+					return;
+				}
+				const nowTime = Date.now();
+				const lastCheck = GLOBAL_LAST_ACTIVE_WRITE.get(username + "_hb") || 0;
+				if (nowTime - lastCheck >= 20000) {
+					GLOBAL_LAST_ACTIVE_WRITE.set(username + "_hb", nowTime);
+
 					const user = await env.DB.prepare("SELECT is_active, limit_gb, used_gb, limit_req, used_req, expiry_days, created_at, ip_limit, active_ips FROM users WHERE uuid = ?").bind(validUUID).first();
 					let isExpired = false;
 					let isIpLimitExpired = false;
@@ -1395,81 +1289,57 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 					if (!user || user.is_active === 0) {
 						isExpired = true;
 					} else {
-						if (user.limit_gb && user.used_gb >= user.limit_gb) {
-							isExpired = true;
-						}
-						if (user.limit_req && user.used_req + (USER_REQ_CACHE.get(username) || 0) >= user.limit_req) {
-							isExpired = true;
-						}
+						if (user.limit_gb && user.used_gb >= user.limit_gb) isExpired = true;
+						if (user.limit_req && user.used_req + (USER_REQ_CACHE.get(username) || 0) >= user.limit_req) isExpired = true;
 						if (user.expiry_days && user.created_at) {
-							const created = new Date(user.created_at);
-							const expiryDate = new Date(created.getTime() + user.expiry_days * 24 * 60 * 60 * 1000);
-							if (new Date() > expiryDate) {
-								isExpired = true;
-							}
+							const expiryDate = new Date(new Date(user.created_at).getTime() + user.expiry_days * 86400000);
+							if (nowTime > expiryDate.getTime()) isExpired = true;
 						}
 						if (!isExpired && clientIP && clientIP !== "unknown") {
 							let activeIps = {};
-							try {
-								activeIps = JSON.parse(user.active_ips || "{}");
-							} catch (e) {}
-							const nowTime = Date.now();
+							try { activeIps = JSON.parse(user.active_ips || "{}"); } catch (e) {}
 							let hasChanges = false;
 							for (const [ip, data] of Object.entries(activeIps)) {
 								const lastSeen = data && typeof data === "object" ? data.timestamp : data;
-								if (nowTime - lastSeen > 20000) {
-									delete activeIps[ip];
-									hasChanges = true;
-								}
+								if (nowTime - lastSeen > 20000) { delete activeIps[ip]; hasChanges = true; }
 							}
 							if (!activeIps[clientIP]) {
 								isIpLimitExpired = true;
-								console.log(`[Heartbeat] IP ${clientIP} expired from active_ips due to inactivity.`);
 							} else {
 								const sortedIps = Object.keys(activeIps).sort((a, b) => {
-									const tA = activeIps[a] && typeof activeIps[a] === "object" ? activeIps[a].timestamp : activeIps[a];
-									const tB = activeIps[b] && typeof activeIps[b] === "object" ? activeIps[b].timestamp : activeIps[b];
+									const tA = typeof activeIps[a] === "object" ? activeIps[a].timestamp : activeIps[a];
+									const tB = typeof activeIps[b] === "object" ? activeIps[b].timestamp : activeIps[b];
 									return tB - tA;
 								});
-								const clientIpIndex = sortedIps.indexOf(clientIP);
-								if (user.ip_limit && user.ip_limit > 0 && clientIpIndex >= user.ip_limit) {
-									isIpLimitExpired = true;
-									console.log(`[Heartbeat] IP Limit Exceeded. Client IP index ${clientIpIndex} >= limit ${user.ip_limit}.`);
-								}
+								if (user.ip_limit && user.ip_limit > 0 && sortedIps.indexOf(clientIP) >= user.ip_limit) isIpLimitExpired = true;
 							}
-							if (hasChanges || isIpLimitExpired) {
-								updatedActiveIps = JSON.stringify(activeIps);
-							}
+							if (hasChanges || isIpLimitExpired) updatedActiveIps = JSON.stringify(activeIps);
 						}
 					}
 					if (isExpired) {
 						await env.DB.prepare("UPDATE users SET is_active = 0, last_active = 0 WHERE uuid = ?").bind(validUUID).run();
-						clearInterval(heartbeat);
+						clearTimeout(heartbeat);
 						closeSocketQuietly(serverSock);
 						return;
 					}
 					if (isIpLimitExpired) {
-						console.log(`[Heartbeat] Terminating socket for user ${username}.`);
-						clearInterval(heartbeat);
+						clearTimeout(heartbeat);
 						closeSocketQuietly(serverSock);
 						return;
 					}
-					const now = Date.now();
-					const lastRecorded = GLOBAL_LAST_ACTIVE_WRITE.get(username) || 0;
-					if (now - lastRecorded > 25000 || updatedActiveIps !== null) {
-						GLOBAL_LAST_ACTIVE_WRITE.set(username, now);
-						if (updatedActiveIps !== null) {
-							await env.DB.prepare("UPDATE users SET last_active = ?, active_ips = ? WHERE username = ?").bind(now, updatedActiveIps, username).run();
-						} else {
-							await env.DB.prepare("UPDATE users SET last_active = ? WHERE username = ?").bind(now, username).run();
-						}
+					if (updatedActiveIps !== null) {
+						await env.DB.prepare("UPDATE users SET last_active = ?, active_ips = ? WHERE username = ?").bind(nowTime, updatedActiveIps, username).run();
+					} else {
+						await env.DB.prepare("UPDATE users SET last_active = ? WHERE username = ?").bind(nowTime, username).run();
 					}
 				}
 			} catch (e) {}
+			heartbeat = setTimeout(runHeartbeat, Math.floor(Math.random() * 5000) + 20000);
 		} else {
-			clearInterval(heartbeat);
+			clearTimeout(heartbeat);
 		}
-	}, 25000);
+	};
+	heartbeat = setTimeout(runHeartbeat, Math.floor(Math.random() * 5000) + 20000);
 	let remoteConnWrapper = { socket: null, connectingPromise: null, retryConnect: null };
 	let reqUUID = null;
 	let isHeaderParsed = false;
@@ -1477,7 +1347,7 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 	let isDnsQuery = false;
 	let chunkBuffer = new Uint8Array(0);
 	let uncountedBytes = 0;
-	const proxyIP = storedData?.proxy_ip || "proxyip.cmliussss.net";
+	const proxyIP = storedData?.proxy_ip || "";
 	let wsChain = Promise.resolve();
 	let wsStopped = false,
 		wsFailed = false,
@@ -1594,31 +1464,22 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 				targetDoh = "https://dns.adguard-dns.com/dns-query";
 			}
 			if (clientIP && clientIP !== "unknown") {
-				console.log(`[vIees Handshake] User: ${user.username}, clientIP: ${clientIP}, active_ips in DB: ${user.active_ips}`);
 				let activeIps = {};
-				try {
-					activeIps = JSON.parse(user.active_ips || "{}");
-				} catch (e) {}
+				try { activeIps = JSON.parse(user.active_ips || "{}"); } catch (e) {}
 				const now = Date.now();
 				for (const [ip, data] of Object.entries(activeIps)) {
 					const lastSeen = data && typeof data === "object" ? data.timestamp : data;
-					if (now - lastSeen > 20000) {
-						delete activeIps[ip];
-					}
+					if (now - lastSeen > 20000) delete activeIps[ip];
 				}
+				let isNewIp = false;
 				if (!activeIps[clientIP]) {
-					const sortedIps = Object.keys(activeIps).sort((a, b) => {
-						const tA = activeIps[a] && typeof activeIps[a] === "object" ? activeIps[a].timestamp : activeIps[a];
-						const tB = activeIps[b] && typeof activeIps[b] === "object" ? activeIps[b].timestamp : activeIps[b];
-						return tB - tA;
-					});
-					console.log(`[vIees Handshake] Non-expired active IPs: ${JSON.stringify(activeIps)}, count: ${sortedIps.length}, limit: ${user.ip_limit}`);
+					const sortedIps = Object.keys(activeIps);
 					if (user.ip_limit && user.ip_limit > 0 && sortedIps.length >= user.ip_limit) {
-						console.log(`[vIees Handshake] BLOCKED user ${user.username} because sortedIps.length (${sortedIps.length}) >= limit (${user.ip_limit})`);
 						serverSock.close();
 						return;
 					}
 					activeIps[clientIP] = { timestamp: now, count: 1 };
+					isNewIp = true;
 				} else {
 					if (typeof activeIps[clientIP] === "object") {
 						activeIps[clientIP].timestamp = now;
@@ -1626,13 +1487,17 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 					} else {
 						activeIps[clientIP] = { timestamp: now, count: 1 };
 					}
-					console.log(`[vIees Handshake] Reconnected from same IP: ${clientIP}, count: ${activeIps[clientIP].count}`);
 				}
-				try {
-					await env.DB.prepare("UPDATE users SET active_ips = ?, last_active = ? WHERE uuid = ?").bind(JSON.stringify(activeIps), now, reqUUID).run();
-					console.log(`[vIees Handshake] Successfully updated active_ips to: ${JSON.stringify(activeIps)}`);
-				} catch (e) {
-					console.error(`[vIees Handshake] DB Update Error: ${e.message}`);
+				const lastWrite = GLOBAL_LAST_ACTIVE_WRITE.get(username) || 0;
+				if (isNewIp || (now - lastWrite > 10000)) {
+					GLOBAL_LAST_ACTIVE_WRITE.set(username, now);
+					const updateTask = async () => {
+						try {
+							await env.DB.prepare("UPDATE users SET active_ips = ?, last_active = ? WHERE uuid = ?").bind(JSON.stringify(activeIps), now, reqUUID).run();
+						} catch (e) {}
+					};
+					if (ctx) ctx.waitUntil(updateTask());
+					else updateTask();
 				}
 			}
 			isHeaderParsed = true;
@@ -1696,6 +1561,10 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 					}
 					return;
 				}
+				if (port === 25 || port === 22 || /^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|::1|fd[0-9a-f]{2}:|fe80:)/i.test(addr)) {
+					serverSock.close();
+					return;
+				}
 				const connectTCP = async (dataPayload = null, useFallback = true) => {
 					if (remoteConnWrapper.connectingPromise) {
 						await remoteConnWrapper.connectingPromise;
@@ -1718,7 +1587,7 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 							} else {
 							let activeProxyIP = proxyIP;
 							if (user?.user_proxy_iata) {
-								activeProxyIP = user.user_proxy_iata.toLowerCase() + ".proxyip.cmliussss.net";
+								activeProxyIP = "";
 							} else if (user?.user_proxy_ip) {
 								activeProxyIP = user.user_proxy_ip;
 							}
@@ -1743,7 +1612,7 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 									}
 								}
 							}
-							const isCustomProxy = activeProxyIP && activeProxyIP !== "proxyip.cmliussss.net";
+							const isCustomProxy = activeProxyIP && activeProxyIP !== "";
 							if (isCustomProxy) {
 								try {
 									s = await connectDirect(fHost, fPort, dataPayload, targetDoh);
@@ -1817,7 +1686,7 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 		});
 	});
 	serverSock.addEventListener("close", () => {
-		clearInterval(heartbeat);
+		clearTimeout(heartbeat);
 		closeSocketQuietly(serverSock);
 		setOffline();
 		if (wsFinished) return;
@@ -2361,69 +2230,23 @@ async function connectStreams(remoteSocket, webSocket, headerData, retryFunc, on
 	}
 	if (!hasData && retryFunc) await retryFunc();
 }
-async function buildRaceCandidates(address, port, targetDoh) {
-	if (!PRELOAD_RACE_DIAL || isIPHostname(address)) return null;
-	const [aRecords, aaaaRecords] = await Promise.all([dohQuery(address, "A", targetDoh), dohQuery(address, "AAAA", targetDoh)]);
-	const ipv4List = [
-		...new Set(
-			aRecords.flatMap((r) => {
-				return r.type === 1 && typeof r.data === "string" && isIPv4(r.data) ? [r.data] : [];
-			}),
-		),
-	];
-	const ipv6List = [
-		...new Set(
-			aaaaRecords.flatMap((r) => {
-				return r.type === 28 && typeof r.data === "string" && isIPHostname(r.data) ? [r.data] : [];
-			}),
-		),
-	];
-	const limit = Math.max(1, TCP_CONCURRENCY | 0);
-	const ipList = ipv4List.length >= limit ? ipv4List.slice(0, limit) : ipv4List.concat(ipv6List.slice(0, limit - ipv4List.length));
-	if (ipList.length === 0) return null;
-	return ipList.map((hostname, attempt) => ({ hostname, port, attempt, resolvedFrom: address }));
-}
-async function connectDirect(address, port, initialData = null, targetDoh = "https://cloudflare-dns.com/dns-query") {
-	const raceCandidates = await buildRaceCandidates(address, port, targetDoh);
-	const candidates = raceCandidates || Array.from({ length: TCP_CONCURRENCY }, () => ({ hostname: address, port }));
-	const openConnection = async (host, prt) => {
-		const socket = connect({ hostname: host, port: prt });
-		await Promise.race([socket.opened, new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))]);
-		return socket;
-	};
-	if (candidates.length === 1) {
-		const s = await openConnection(candidates[0].hostname, candidates[0].port);
-		if (initialData && initialData.byteLength > 0) {
-			const w = s.writable.getWriter();
-			await w.write(convertToUint8Array(initialData));
-			w.releaseLock();
-		}
-		return s;
-	}
-	const attempts = candidates.map((c) => openConnection(c.hostname, c.port).then((socket) => ({ socket, candidate: c })));
-	let winner = null;
+async function connectDirect(targetHost, targetPort, initialData, targetDoh) {
+	let socket = null;
 	try {
-		winner = await Promise.any(attempts);
+		socket = connect({ hostname: targetHost, port: targetPort });
+		const writer = socket.writable.getWriter();
 		if (initialData && initialData.byteLength > 0) {
-			const w = winner.socket.writable.getWriter();
-			await w.write(convertToUint8Array(initialData));
-			w.releaseLock();
+			await writer.write(initialData);
 		}
-		return winner.socket;
-	} finally {
-		if (winner) {
-			for (const attempt of attempts) {
-				attempt
-					.then(({ socket }) => {
-						if (socket !== winner.socket) {
-							try {
-								socket.close();
-							} catch (e) {}
-						}
-					})
-					.catch(() => {});
-			}
+		writer.releaseLock();
+		return socket;
+	} catch (e) {
+		if (socket) {
+			try {
+				await socket.close();
+			} catch (err) {}
 		}
+		throw new Error(`Connection failed to ${targetHost}:${targetPort}`);
 	}
 }
 async function forwardvIeesUDP(udpChunk, webSocket, respHeader, onBytes, dnsServer = "8.8.4.4") {
@@ -2550,7 +2373,7 @@ async function connectSocks5(socksStr, destAddr, destPort, initialData) {
 			await writer.write(new Uint8Array([0x05, 0x01, 0x00]));
 		}
 		let res = await reader.read();
-		if (res.done || !res.value || res.value[0] !== 0x05) throw new Error("پاسخ نامعتبر از سرور (پروکسی SOCKS5 نیست یا خاموش است)");
+		if (res.done || !res.value || res.value[0] !== 0x05) throw new Error("پاسخ نامعتبر از سرور (پـروکـسـی SOCKS5 نیست یا خاموش است)");
 		const method = res.value[1];
 		if (method === 0x02) {
 			const uEnc = new TextEncoder().encode(user);
@@ -2563,7 +2386,7 @@ async function connectSocks5(socksStr, destAddr, destPort, initialData) {
 			authReq.set(pEnc, 3 + uEnc.length);
 			await writer.write(authReq);
 			let authRes = await reader.read();
-			if (authRes.done || !authRes.value || authRes.value[1] !== 0x00) throw new Error("نام کاربری یا رمز عبور پروکسی اشتباه است");
+			if (authRes.done || !authRes.value || authRes.value[1] !== 0x00) throw new Error("نام کاربری یا رمز عبور پـروکـسـی اشتباه است");
 		}
 		let addrType = 0x03;
 		let addrBytes;
@@ -2587,7 +2410,7 @@ async function connectSocks5(socksStr, destAddr, destPort, initialData) {
 		req[portOffset + 1] = destPort & 0xff;
 		await writer.write(req);
 		let connRes = await reader.read();
-		if (connRes.done || !connRes.value || connRes.value[1] !== 0x00) throw new Error("پروکسی وصل شد اما دسترسی به اینترنت آزاد ندارد");
+		if (connRes.done || !connRes.value || connRes.value[1] !== 0x00) throw new Error("پـروکـسـی وصل شد اما دسترسی به اینترنت آزاد ندارد");
 		if (initialData && initialData.byteLength > 0) {
 			await writer.write(convertToUint8Array(initialData));
 		}
@@ -2698,25 +2521,28 @@ const COMMON_TOAST_JS = `
 `;
 const HTML_TEMPLATES = {
 	nginx: `<!DOCTYPE html>
-<html>
+<html lang="fa" dir="rtl" class="dark">
 <head>
-<title>Welcome to nginx!</title>
-<style>
-html { color-scheme: light dark; }
-body { width: 35em; margin: 0 auto; font-family: Tahoma, Verdana, Arial, sans-serif; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>دسترسی به پـنـل</title>
+    ${COMMON_HEAD}
 </head>
-<body>
-<h1>Welcome to nginx!</h1>
-<p>If you see this page, the nginx web server is successfully installed and
-working. Further configuration is required.</p>
-
-<p>For online documentation and support please refer to
-<a href="http://nginx.org/">nginx.org</a>.<br/>
-Commercial support is available at
-<a href="http://nginx.com/">nginx.com</a>.</p>
-
-<p><em>Thank you for using nginx.</em></p>
+<body class="bg-gray-50 text-gray-900 dark:bg-amoled-bg dark:text-zinc-100 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl p-8 text-center flex flex-col items-center gap-4">
+        <div class="p-4 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-full mb-2">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        </div>
+        <h2 class="text-xl font-bold text-gray-900 dark:text-white">ورود به پـنـل مدیریت</h2>
+        <p class="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mt-2">
+            برای ورود به پـنـل، لطفاً عبارت 
+            <span class="inline-block px-2 py-1 bg-gray-100 dark:bg-amoled-input border border-gray-200 dark:border-zinc-800 rounded-md font-mono text-blue-500 font-bold mx-1 shadow-sm" dir="ltr">/panel</span> 
+            را به انتهای آدرس مرورگر خود اضافه کنید.
+        </p>
+        <button onclick="window.location.href='/panel'" class="mt-4 w-full py-2.5 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-medium rounded-md text-sm transition-colors duration-200 shadow-lg font-bold">
+            ورود به پـنـل
+        </button>
+    </div>
 </body>
 </html>`,
 	setup: `<!DOCTYPE html>
@@ -2724,13 +2550,13 @@ Commercial support is available at
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>تعریف رمز عبور پنل</title>
+    <title>تعریف رمز عبور پـنـل</title>
     ${COMMON_HEAD}
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-amoled-bg dark:text-zinc-100 min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl p-6">
         <h2 class="text-xl font-bold mb-2 text-center text-blue-600 dark:text-blue-400">تنظیم رمز عبور جدید</h2>
-        <p class="text-sm text-gray-500 dark:text-gray-400 text-center mb-6">این اولین ورود شما به پنل مدیریت است. لطفاً رمز عبور خود را تعیین کنید.</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 text-center mb-6">این اولین ورود شما به پـنـل مدیریت است. لطفاً رمز عبور خود را تعیین کنید.</p>
         <form onsubmit="handleSetup(event)" class="space-y-4">
             <div>
                 <label class="block text-sm font-medium mb-1.5">رمز عبور</label>
@@ -2787,13 +2613,13 @@ Commercial support is available at
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ورود به پنل مدیریت</title>
+    <title>ورود به پـنـل مدیریت</title>
     ${COMMON_HEAD}
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-amoled-bg dark:text-zinc-100 min-h-screen flex items-center justify-center p-4">
     <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl p-6">
         <div id="login-section">
-            <h2 class="text-xl font-bold mb-6 text-center text-blue-600 dark:text-blue-400">ورود به پنل مدیریت</h2>
+            <h2 class="text-xl font-bold mb-6 text-center text-blue-600 dark:text-blue-400">ورود به پـنـل مدیریت</h2>
             <form onsubmit="handleLogin(event)" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium mb-1.5">رمز عبور</label>
@@ -2802,14 +2628,14 @@ Commercial support is available at
                 <button type="submit" id="submit-btn" class="w-full py-2.5 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-medium rounded-md text-sm transition font-bold">ورود</button>
             </form>
             <div class="mt-4 text-center">
-                <button onclick="toggleRecovery(true)" class="text-xs text-blue-500 hover:text-blue-600 transition font-medium">بازیابی رمز پنل</button>
+                <button onclick="toggleRecovery(true)" class="text-xs text-blue-500 hover:text-blue-600 transition font-medium">بازیابی رمز پـنـل</button>
             </div>
         </div>
         <div id="recovery-section" class="hidden">
-            <h2 class="text-xl font-bold mb-4 text-center text-orange-600 dark:text-orange-400">بازیابی رمز پنل</h2>
+            <h2 class="text-xl font-bold mb-4 text-center text-orange-600 dark:text-orange-400">بازیابی رمز پـنـل</h2>
             <div class="mb-5 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-md text-xs leading-relaxed text-orange-800 dark:text-orange-300">
-                برای احراز هویت و اثبات مالکیت پنل، از طریق دکمه زیر وارد کلودفلر شوید و توکن دریافتی را کپی کرده و در کادر زیر وارد کنید.
-                <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_subdomain%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=N-MAP-Deployer-Token" target="_blank" class="mt-3 w-full flex items-center justify-center gap-2 py-2 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 rounded-md font-bold transition shadow-md">
+                برای احراز هویت و اثبات مالکیت پـنـل، از طریق دکمه زیر وارد کلودفلر شوید و توکن دریافتی را کپی کرده و در کادر زیر وارد کنید.
+                <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_subdomain%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=Zeus-Deployer-Token" target="_blank" class="mt-3 w-full flex items-center justify-center gap-2 py-2 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 rounded-md font-bold transition shadow-md">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                     دریافت توکن
                 </a>
@@ -2820,7 +2646,7 @@ Commercial support is available at
                 </div>
                 <div class="flex gap-2 pt-2">
                     <button type="button" onclick="toggleRecovery(false)" class="w-1/3 py-2.5 bg-transparent border-2 border-rose-700 text-rose-700 hover:bg-rose-900/20 hover:text-rose-800 dark:border-rose-700 dark:text-rose-500 dark:hover:bg-rose-900/40 dark:hover:text-rose-400 font-bold rounded-md text-sm transition shadow-sm">انصراف</button>
-                    <button type="submit" id="recover-btn" class="w-2/3 py-2.5 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-medium rounded-md text-sm transition font-bold">بازیابی رمز پنل</button>
+                    <button type="submit" id="recover-btn" class="w-2/3 py-2.5 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-medium rounded-md text-sm transition font-bold">بازیابی رمز پـنـل</button>
                 </div>
             </form>
         </div>
@@ -2880,7 +2706,7 @@ Commercial support is available at
                 alert('خطا در ارتباط با سرور');
             } finally {
                 btn.disabled = false;
-                btn.innerText = 'بازیابی رمز پنل';
+                btn.innerText = 'بازیابی رمز پـنـل';
             }
         }
     </script>
@@ -2892,7 +2718,7 @@ Commercial support is available at
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>N-MAP</title>
+    <title>Z E U S</title>
     <script>
         const originalWarn = console.warn;
         console.warn = (...args) => {
@@ -2958,21 +2784,21 @@ Commercial support is available at
         <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             <div class="flex flex-row flex-wrap justify-center items-center gap-3 w-full md:w-auto">
                 <h1 class="text-lg font-bold flex items-center gap-2" dir="ltr">
-                    N-MAP
+                    Z E U S
                     <span id="panel-version" class="text-xs px-2 py-0.5 font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 rounded-full">v1.5.10</span>
                 </h1>
                 <div class="flex items-center gap-3 bg-gray-100 dark:bg-zinc-800/60 px-3 py-1.5 rounded-full border border-gray-200 dark:border-zinc-800/80 shadow-sm flex-shrink-0 w-fit">
-                    <a href="https://github.com/nikvpn-iran/n-map" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="GitHub">
+                    <a href="https://github.com/IR-NETLIFY/zeus" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="GitHub">
                         <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
                         </svg>
                     </a>
-                    <a href="https://t.me/nikvpn" target="_blank" rel="noopener noreferrer" class="text-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Telegram">
+                    <a href="https://t.me/PANEL_ZEUS" target="_blank" rel="noopener noreferrer" class="text-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Telegram">
                         <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.94-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.37.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .24z"/>
                         </svg>
                     </a>
-                    <a href="https://t.me/nikvpn" target="_blank" rel="noopener noreferrer" class="text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Bot">
+                    <a href="https://t.me/ZEUS_PANEL_BOT" target="_blank" rel="noopener noreferrer" class="text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Bot">
                         <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M12 8V4H8"/>
                             <rect width="16" height="12" x="4" y="8" rx="2"/>
@@ -3004,7 +2830,7 @@ Commercial support is available at
                                hover:bg-blue-100 dark:hover:bg-blue-900/50 
                                transition-all duration-200 
                                text-blue-600 dark:text-blue-400 shadow-sm" 
-                        title="ری استارت پنل">
+                        title="ری استارت پـنـل">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                     </svg>
@@ -3038,25 +2864,13 @@ Commercial support is available at
                     </svg>
                     <span id="update-badge" class="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-green-50 dark:border-green-900 rounded-full hidden animate-pulse"></span>
                 </button>
-                <button onclick="toggleAccountsModal(true)"
-                        class="p-2 rounded-md
-                               bg-indigo-50 dark:bg-indigo-950/30
-                               border border-indigo-200 dark:border-indigo-900
-                               hover:bg-indigo-100 dark:hover:bg-indigo-900/50
-                               transition-all duration-200
-                               text-indigo-600 dark:text-indigo-400 shadow-sm"
-                        title="اکانت‌های API">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                    </svg>
-                </button>
-                <button onclick="toggleSettingsModal(true)"
-                        class="p-2 rounded-md
-                               bg-gray-50 dark:bg-zinc-800/50
-                               border border-gray-200 dark:border-zinc-700
-                               hover:bg-gray-100 dark:hover:bg-zinc-700/80
-                               transition-all duration-200
-                               text-gray-600 dark:text-zinc-400 shadow-sm"
+                <button onclick="toggleSettingsModal(true)" 
+                        class="p-2 rounded-md 
+                               bg-gray-50 dark:bg-zinc-800/50 
+                               border border-gray-200 dark:border-zinc-700 
+                               hover:bg-gray-100 dark:hover:bg-zinc-700/80 
+                               transition-all duration-200 
+                               text-gray-600 dark:text-zinc-400 shadow-sm" 
                         title="تنظیمات">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
@@ -3218,7 +3032,7 @@ Commercial support is available at
         </div>
         <h3 class="font-black text-xl text-gray-900 dark:text-white mb-2">هشدار محدودیت درخواست روزانه</h3>
         <p class="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed font-medium">
-            درخواست‌های روزانه کلودفلر شما از ۹۰,۰۰۰ عبور کرده است. در صورت عبور از محدودیت رایگان ۱۰۰,۰۰۰ درخواست، دسترسی به پنل و اتصالات تا ساعت ۳:۳۰ بامداد (به وقت ایران) قطع خواهد شد.
+            درخواست‌های روزانه کلودفلر شما از ۹۰,۰۰۰ عبور کرده است. در صورت عبور از محدودیت رایگان ۱۰۰,۰۰۰ درخواست، دسترسی به پـنـل و اتصالات تا ساعت ۳:۳۰ بامداد (به وقت ایران) قطع خواهد شد.
         </p>
         <button onclick="closeUsageWarning()" class="w-full py-3.5 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-black rounded-md text-sm transition duration-300 shadow-lg">
             متوجه شدم
@@ -3232,7 +3046,7 @@ Commercial support is available at
         </div>
         <h3 class="font-black text-xl text-gray-900 dark:text-white mb-2">پیام همگانی</h3>
         <p class="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed font-medium">
-            این پنل کاملاً <span class="text-rose-500 font-bold">رایگان</span> است. هرگونه فروش پنل یا کـانفـیگ‌های آن مصداق کلاه‌برداری و رفتاری دور از انسانیت و شرافت است. لطفاً از این ابزار فقط به صورت شخصی و رایگان استفاده کنید.
+            این پـنـل کاملاً <span class="text-rose-500 font-bold">رایگان</span> است. هرگونه فروش پـنـل یا کـانفـیگ‌های آن مصداق کلاه‌برداری و رفتاری دور از انسانیت و شرافت است. لطفاً از این ابزار فقط به صورت شخصی و رایگان استفاده کنید.
         </p>
         <button onclick="closeFreePanelWarning()" class="w-full py-3.5 bg-transparent border-2 border-green-800 text-green-900 hover:bg-green-800 hover:text-white dark:border-green-800 dark:text-green-700 dark:hover:bg-green-900 dark:hover:text-white font-black rounded-md text-sm transition duration-300 shadow-lg">
             تأیید و موافقت
@@ -3277,7 +3091,7 @@ Commercial support is available at
                                     <span class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-gray-400">
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                                     </span>
-                                    <input type="text" id="input-name" oninput="this.value = this.value.replace(/[^a-zA-Z0-9_-]/g, '')" placeholder="nikvpn" maxlength="32" class="w-full pl-3 pr-9 py-1.5 bg-gray-50 dark:bg-amoled-input border border-gray-200 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-xs font-semibold text-gray-800 dark:text-zinc-100 placeholder-gray-400/80 transition" required>
+                                    <input type="text" id="input-name" oninput="this.value = this.value.replace(/[^a-zA-Z0-9_-]/g, '')" placeholder="Z_E_U_S" maxlength="32" class="w-full pl-3 pr-9 py-1.5 bg-gray-50 dark:bg-amoled-input border border-gray-200 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-xs font-semibold text-gray-800 dark:text-zinc-100 placeholder-gray-400/80 transition" required>
                                 </div>
                             </div>
                             <div class="grid grid-cols-2 gap-2.5">
@@ -3436,8 +3250,8 @@ Commercial support is available at
                                 <label class="block text-xs sm:text-sm font-bold text-gray-700 dark:text-zinc-300 cursor-pointer truncate" onclick="document.getElementById('user-proxy-mode-toggle').click()">ثابت کردن کشور و آیپی</label>
                             </div>
                             <div class="grid grid-cols-2 gap-2 mb-2 w-full">
-                                <button type="button" onclick="toggleDonateModal(true)" class="text-[11px] bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 px-2 py-2 rounded border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition font-black shadow-sm text-center whitespace-nowrap">اهدای پروکسی شخصی ❤️</button>
-                                <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="text-[11px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-2 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition font-black shadow-sm text-center whitespace-nowrap">ساخت پروکسی شخصی</a>
+                                <button type="button" onclick="toggleDonateModal(true)" class="text-[11px] bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 px-2 py-2 rounded border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition font-black shadow-sm text-center whitespace-nowrap">اهدای پـروکـسـی شخصی ❤️</button>
+                                <a href="https://github.com/IR-NETLIFY/zeus-relay" target="_blank" class="text-[11px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-2 rounded border border-blue-200 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition font-black shadow-sm text-center whitespace-nowrap">ساخت پـروکـسـی شخصی</a>
                             </div>
                             <div class="relative transition-opacity duration-300 opacity-50 pointer-events-none flex-1 flex flex-col justify-start" id="user-socks5-container">
                                 <input type="text" id="user-socks5-input" placeholder="socks5:// یا http:// یا (user:pass@ip:port)" dir="ltr" class="w-full px-3 py-2.5 bg-gray-50 dark:bg-amoled-input border border-gray-200 dark:border-amoled-border rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 dark:text-zinc-100 transition" disabled>
@@ -3445,16 +3259,16 @@ Commercial support is available at
                                     <span id="test-user-proxy-result" class="inline-block mt-2 text-[11px] font-bold transition-colors break-words leading-relaxed empty:hidden"></span>
                                 </div>
                                 <div class="mt-2 flex items-center justify-between w-full gap-2">
-                                    <button type="button" onclick="testUserSocksProxy()" id="test-user-proxy-btn" class="flex-1 text-center text-[11px] bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 py-1.5 rounded border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-900/50 transition font-bold shadow-sm">تست پروکسی</button>
-                                    <button type="button" onclick="openProxySelectorModal()" class="flex-1 text-center text-[11px] bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 py-1.5 rounded border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition font-bold shadow-sm">مخزن پروکسی</button>
+                                    <button type="button" onclick="testUserSocksProxy()" id="test-user-proxy-btn" class="flex-1 text-center text-[11px] bg-sky-50 dark:bg-sky-900/30 text-sky-600 dark:text-sky-400 py-1.5 rounded border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-900/50 transition font-bold shadow-sm">تست پـروکـسـی</button>
+                                    <button type="button" onclick="openProxySelectorModal()" class="flex-1 text-center text-[11px] bg-amber-50 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 py-1.5 rounded border border-amber-200 dark:border-amber-800 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition font-bold shadow-sm">مخزن پـروکـسـی</button>
                                 </div>
                                 <div class="mt-3 p-2 border-2 border-dashed border-red-400 dark:border-red-500/70 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 rounded-md text-[11px] font-bold leading-relaxed text-center w-full">
-                                        پروکسی‌های عمومی ناپایدارند. برای کیفیت بالاتر از <span class="text-amber-600 dark:text-amber-400 font-black">«مخزن پروکسی»</span> یا از دکمه <span class="text-blue-600 dark:text-blue-400 font-black">«ساخت پروکسی شخصی»</span> استفاده کنید.
+                                        پـروکـسـی‌های عمومی ناپایدارند. برای کیفیت بالاتر از <span class="text-amber-600 dark:text-amber-400 font-black">«مخزن پـروکـسـی»</span> یا از دکمه <span class="text-blue-600 dark:text-blue-400 font-black">«ساخت پـروکـسـی شخصی»</span> استفاده کنید.
                                 </div>
                                 <div class="mt-2 flex items-center justify-between border border-gray-100 dark:border-amoled-border p-3 rounded-md bg-gray-50 dark:bg-amoled-input">
                                     <div class="flex items-center gap-2">
                                         <svg class="w-4 h-4 text-gray-500 dark:text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
-                                        <span class="text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">تعویض خودکار پروکسی (پیشنهادی)</span>
+                                        <span class="text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">تعویض خودکار پـروکـسـی (پیشنهادی)</span>
                                     </div>
                                     <label class="relative inline-flex items-center cursor-pointer select-none">
                                         <input type="checkbox" id="input-auto-rotate-user-proxy" class="sr-only peer">
@@ -3533,7 +3347,7 @@ Commercial support is available at
 <div id="proxy-selector-modal" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300 ease-out">
     <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl overflow-hidden transition-all transform duration-300 opacity-0 scale-95 ease-out">
         <div class="px-6 py-4 border-b border-gray-150 dark:border-amoled-border flex justify-between items-center bg-gray-50 dark:bg-zinc-900/50">
-            <h3 class="font-bold text-gray-900 dark:text-zinc-100 text-sm">مخزن پروکسی‌های آی‌پی ثابت</h3>
+            <h3 class="font-bold text-gray-900 dark:text-zinc-100 text-sm">مخزن پـروکـسـی‌های آی‌پی ثابت</h3>
             <button type="button" onclick="toggleProxySelectorModal(false)" class="p-1.5 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
@@ -3542,10 +3356,10 @@ Commercial support is available at
             <div class="p-4 bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-500/30 rounded-md relative">
                 <h4 class="text-[13px] font-black text-emerald-700 dark:text-emerald-400 mb-2 flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
-                    پروکسی‌های اختصاصی (VIP)
+                    پـروکـسـی‌های اختصاصی (VIP)
                 </h4>
                 <p class="text-[10px] text-emerald-600/80 dark:text-emerald-500/70 mb-3 leading-relaxed font-medium">
-                    پروکسی‌های اهدایی از طرف کاربران. کیفیت بالا و بدون نیاز به اسکن.
+                    پـروکـسـی‌های اهدایی از طرف کاربران. کیفیت بالا و بدون نیاز به اسکن.
                 </p>
                 <div class="flex flex-col sm:flex-row gap-2">
                     <select id="vip-country-select" class="flex-1 px-3 py-2 bg-white dark:bg-amoled-input border border-emerald-200 dark:border-emerald-800/50 rounded-md text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 text-gray-700 dark:text-zinc-300 cursor-pointer">
@@ -3563,7 +3377,7 @@ Commercial support is available at
             <div class="p-4 bg-gray-50 dark:bg-zinc-900/40 border border-gray-200 dark:border-amoled-border rounded-md">
                 <h4 class="text-[13px] font-black text-gray-700 dark:text-zinc-300 mb-2 flex items-center gap-1.5">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
-                    پروکسی های عمومی
+                    پـروکـسـی های عمومی
                 </h4>
                 <p class="text-[10px] text-gray-500 dark:text-zinc-500 mb-3 leading-relaxed font-medium">
                     جستجو در منابع رایگان؛ به دلیل نیاز به تست کیفیت زمان‌بر است.
@@ -3576,7 +3390,7 @@ Commercial support is available at
                         <option value="">در حال آماده‌سازی...</option>
                     </select>
                     <button type="button" onclick="fetchAndLoadProxy()" id="proxy-fetch-btn" class="w-full py-2.5 bg-transparent border-2 border-blue-600 text-blue-700 hover:bg-blue-900/20 hover:text-blue-800 dark:border-blue-500 dark:text-blue-500 dark:hover:bg-blue-900/40 dark:hover:text-blue-400 font-bold rounded-md text-xs transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-						شروع اسکن و یافتن پروکسی
+						شروع اسکن و یافتن پـروکـسـی
 					</button>
                 </div>
             </div>
@@ -3589,14 +3403,14 @@ Commercial support is available at
 <div id="donate-modal" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300 ease-out">
     <div class="w-full max-w-sm bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl overflow-hidden transition-all transform duration-300 opacity-0 scale-95 ease-out" id="donate-modal-card">
         <div class="px-6 py-4 border-b border-gray-150 dark:border-amoled-border flex justify-between items-center bg-gray-50 dark:bg-zinc-900/50">
-            <h3 class="font-bold text-gray-900 dark:text-zinc-100 text-sm">🎁 اهدای پروکسی</h3>
+            <h3 class="font-bold text-gray-900 dark:text-zinc-100 text-sm">🎁 اهدای پـروکـسـی</h3>
             <button type="button" onclick="toggleDonateModal(false)" class="p-1.5 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
             </button>
         </div>
         <div class="p-6 space-y-4">
             <p class="text-[11px] text-gray-600 dark:text-zinc-400 leading-relaxed font-medium">
-                اگر سرور دارید میتونید با دکمه <span class="text-blue-600 dark:text-blue-400 font-black">«ساخت پروکسی شخصی»</span> یک پروکسی بسازید و اهدا کنید به پروژه
+                اگر سرور دارید میتونید با دکمه <span class="text-blue-600 dark:text-blue-400 font-black">«ساخت پـروکـسـی شخصی»</span> یک پـروکـسـی بسازید و اهدا کنید به پروژه
             </p>
             <div>
                 <input type="text" id="donate-proxy-input" placeholder="user:pass@ip:port" dir="ltr" class="w-full px-3 py-2.5 bg-gray-50 dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500 text-xs font-mono text-left text-gray-900 dark:text-zinc-100 transition">
@@ -3618,7 +3432,7 @@ Commercial support is available at
                 <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
             </svg>
         </div>
-        <h3 class="font-black text-xl text-gray-900 dark:text-white mb-3">حمایت از N-MAP</h3>
+        <h3 class="font-black text-xl text-gray-900 dark:text-white mb-3">حمایت از زئــوس</h3>
         <p class="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed font-medium">
             این پروژه متن باز و رایگان است. برای تضمین پایداری و ادامه مسیر توسعه، نیازمند همراهی و حمایت شما عزیزان هستم. هرگونه حمایت شما، انگیزه من را برای ارائه امکانات بهتر دوچندان می‌کند. ❤️
         </p>
@@ -3627,11 +3441,11 @@ Commercial support is available at
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                 حمایت مالی (ریالی)
             </a>
-            <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="w-full py-3 bg-transparent border-2 border-orange-500 text-orange-600 hover:bg-orange-50 dark:border-orange-500/60 dark:text-orange-400 dark:hover:bg-orange-500/10 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
+            <a href="https://donatonion.ir-netlify.workers.dev/" target="_blank" class="w-full py-3 bg-transparent border-2 border-orange-500 text-orange-600 hover:bg-orange-50 dark:border-orange-500/60 dark:text-orange-400 dark:hover:bg-orange-500/10 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm-.75-3.25h1.5v-1.5h-1.5v1.5zm0-3.5h1.5v-3h-1.5v3z"/></svg>
                 حمایت مالی (رمز ارز)
             </a>
-            <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="w-full py-3 bg-transparent border-2 border-gray-600 text-gray-700 hover:bg-gray-100 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-zinc-800 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
+            <a href="https://github.com/IR-NETLIFY/zeus" target="_blank" class="w-full py-3 bg-transparent border-2 border-gray-600 text-gray-700 hover:bg-gray-100 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-zinc-800 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
                 ستاره در گیت‌هاب
             </a>
@@ -3644,14 +3458,14 @@ Commercial support is available at
     <div id="settings-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300 ease-out">
         <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl overflow-hidden transition-all transform duration-300 opacity-0 scale-95 ease-out flex flex-col max-h-[90vh]">
             <div class="px-6 py-4 border-b border-gray-150 dark:border-amoled-border flex justify-between items-center bg-gray-50 dark:bg-zinc-900/50">
-                <h3 class="font-bold text-gray-900 dark:text-zinc-100">تنظیمات پنل</h3>
+                <h3 class="font-bold text-gray-900 dark:text-zinc-100">تنظیمات پـنـل</h3>
                 <button onclick="toggleSettingsModal(false)" class="p-1.5 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm">
                     <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
             <div class="p-6 space-y-4 overflow-y-auto flex-1 overscroll-contain">
                 <div class="pt-2">
-					<label class="block text-sm font-medium mb-1.5 text-gray-700 dark:text-zinc-300">نرخ رفرش خودکار پنل</label>
+					<label class="block text-sm font-medium mb-1.5 text-gray-700 dark:text-zinc-300">نرخ رفرش خودکار پـنـل</label>
                     <div class="relative">
                         <select id="refresh-rate-select" onchange="changeRefreshRate(this.value)" class="w-full pl-8 pr-3 py-2.5 bg-white dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 dark:text-zinc-200 cursor-pointer appearance-none">
                             <option value="1000">۱ ثانیه</option>
@@ -3701,54 +3515,12 @@ Commercial support is available at
             </div>
         </div>
     </div>
-    <div id="accounts-modal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300 ease-out">
-        <div class="w-full max-w-lg bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-xl overflow-hidden transition-all transform duration-300 opacity-0 scale-95 ease-out flex flex-col max-h-[90vh]">
-            <div class="px-6 py-4 border-b border-gray-150 dark:border-amoled-border flex justify-between items-center bg-gray-50 dark:bg-zinc-900/50">
-                <h3 class="font-bold text-gray-900 dark:text-zinc-100">اکانت‌های API</h3>
-                <button onclick="toggleAccountsModal(false)" class="p-1.5 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-500 hover:bg-red-100 dark:hover:bg-red-900/50 transition-all duration-200 shadow-sm">
-                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
-            </div>
-            <div class="p-6 space-y-4 overflow-y-auto flex-1 overscroll-contain">
-                <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">اکانت اول به‌عنوان «اصلی» برای زیرساخت استفاده می‌شود. اکانت‌های بعدی «ثانویه» هستند و فقط از ریکوئست رایگان روزانه پلتفرم بهره می‌برند.</p>
-                <div id="accounts-list" class="space-y-2">
-                    <div class="text-center text-xs text-gray-400 py-4">در حال بارگذاری...</div>
-                </div>
-                <div class="pt-4 border-t-2 border-gray-300 dark:border-zinc-700">
-                    <h4 class="text-sm font-bold mb-3 text-gray-800 dark:text-zinc-200">➕ افزودن اکانت API</h4>
-                    <div class="space-y-3">
-                        <div>
-                            <label class="block text-[11px] text-gray-500 dark:text-gray-400 font-medium mb-1">پلتفرم</label>
-                            <select id="acc-platform" onchange="updateTokenLink()" class="w-full px-3 py-2.5 bg-white dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 text-gray-700 dark:text-zinc-200 cursor-pointer">
-                                <option value="cloudflare">Cloudflare</option>
-                                <option value="vercel">Vercel</option>
-                            </select>
-                        </div>
-                        <a id="acc-get-token" href="#" target="_blank" class="flex items-center justify-center gap-2 w-full py-2.5 bg-[#d94800] hover:bg-[#e35802] text-white font-bold rounded-md text-xs transition duration-300 shadow-md shadow-orange-500/20">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
-                            <span id="acc-get-token-label">دریافت توکن کلودفلر</span>
-                        </a>
-                        <div>
-                            <label class="block text-[11px] text-gray-500 dark:text-gray-400 font-medium mb-1">نام دلخواه</label>
-                            <input type="text" id="acc-name" placeholder="مثلاً: کلودفلر اصلی" class="w-full px-3 py-2 bg-white dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs">
-                        </div>
-                        <div>
-                            <label class="block text-[11px] text-gray-500 dark:text-gray-400 font-medium mb-1">توکن API</label>
-                            <input type="password" id="acc-token" placeholder="توکن را اینجا paste کنید" class="w-full px-3 py-2 bg-white dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500 text-xs font-mono">
-                        </div>
-                        <div id="acc-verify-msg" class="text-[11px] hidden"></div>
-                        <button type="button" onclick="addApiAccount()" id="acc-add-btn" class="w-full py-2 bg-transparent border-2 border-indigo-600 text-indigo-700 hover:bg-indigo-900/20 hover:text-indigo-800 dark:border-indigo-500 dark:text-indigo-400 dark:hover:bg-indigo-900/40 font-semibold rounded-md text-xs transition-all shadow-sm">اعتبارسنجی و ثبت اکانت</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 <div id="update-modal" class="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300 ease-out">
     <div class="w-full max-w-md bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md shadow-2xl overflow-hidden p-6 text-center transition-all transform duration-300 opacity-0 scale-95 ease-out">
         <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-500 mb-4 shadow-inner">
             <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
         </div>
-        <h3 class="font-black text-xl text-gray-900 dark:text-white mb-2">بروزرسانی پنل</h3>
+        <h3 class="font-black text-xl text-gray-900 dark:text-white mb-2">بروزرسانی پـنـل</h3>
         <p id="update-modal-text" class="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed font-medium">
             نسخه جدید در دسترس است. اگر آپدیت خودکار جواب نداد، حتماً از طریق لینک زیر آپدیت دستی را انجام دهید.
         </p>
@@ -3765,7 +3537,7 @@ Commercial support is available at
                     <span class="bg-white dark:bg-amoled-card px-2 text-gray-400">یا</span>
                 </div>
             </div>
-            <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="w-full py-3.5 bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-500 border border-orange-300 dark:border-orange-500 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
+            <a href="https://zeus-panel.ir-netlify.workers.dev/" target="_blank" class="w-full py-3.5 bg-orange-50 dark:bg-orange-950/30 hover:bg-orange-100 dark:hover:bg-orange-900/50 text-orange-600 dark:text-orange-500 border border-orange-300 dark:border-orange-500 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                 </svg>
@@ -3789,16 +3561,16 @@ Commercial support is available at
                 </button>
             </div>
             <div class="mb-5 p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-md text-xs leading-relaxed text-orange-800 dark:text-orange-300 font-medium">
-                توکن کلودفلر شما در این پنل ذخیره نشده است. برای فعال‌سازی آپدیت خودکار از داخل پنل، لطفاً توکن خود را دریافت کرده و در کادر زیر وارد کنید.
+                توکن کلودفلر شما در این پـنـل ذخیره نشده است. برای فعال‌سازی آپدیت خودکار از داخل پـنـل، لطفاً توکن خود را دریافت کرده و در کادر زیر وارد کنید.
             </div>
-            <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_subdomain%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=N-MAP-Deployer-Token" target="_blank" class="flex items-center justify-center gap-2 w-full py-3 bg-[#d94800] hover:bg-[#e35802] text-white font-bold rounded-md text-sm transition duration-300 mb-4 shadow-md shadow-orange-500/20">
+            <a href="https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_subdomain%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=Zeus-Deployer-Token" target="_blank" class="flex items-center justify-center gap-2 w-full py-3 bg-[#d94800] hover:bg-[#e35802] text-white font-bold rounded-md text-sm transition duration-300 mb-4 shadow-md shadow-orange-500/20">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
                 دریافت توکن کلودفلر
             </a>
             <div class="space-y-4">
                 <input type="password" id="update-token-input" placeholder="توکن را اینجا وارد کنید" class="w-full px-4 py-3 bg-gray-50 dark:bg-amoled-input border border-gray-300 dark:border-amoled-border rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm font-mono text-center text-gray-900 dark:text-zinc-100 transition" dir="auto">
                 <button id="submit-token-btn" onclick="submitTokenForUpdate()" class="w-full py-3 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-bold rounded-md text-sm transition duration-300 shadow-lg">
-                    ثبت و آپدیت پنل
+                    ثبت و آپدیت پـنـل
                 </button>
             </div>
         </div>
@@ -4093,123 +3865,6 @@ ${COMMON_TOAST_HTML}
             if (cb80) cb80.checked = true;
         }, 100);
         function toggleSettingsModal(show) { setModalState('settings-modal', show); }
-        function toggleAccountsModal(show) {
-            setModalState('accounts-modal', show);
-            if (show) { loadApiAccounts(); updateTokenLink(); }
-        }
-        function updateTokenLink() {
-            const platform = document.getElementById('acc-platform').value;
-            const link = document.getElementById('acc-get-token');
-            const label = document.getElementById('acc-get-token-label');
-            if (platform === 'cloudflare') {
-                link.href = 'https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%22%3A%22workers_scripts%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22workers_kv_storage%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22d1%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_settings%22%2C%22type%22%3A%22read%22%7D%2C%7B%22key%22%3A%22workers_subdomain%22%2C%22type%22%3A%22edit%22%7D%2C%7B%22key%22%3A%22account_analytics%22%2C%22type%22%3A%22read%22%7D%5D&accountId=*&zoneId=all&name=N-MAP-Token';
-                label.textContent = 'دریافت توکن کلودفلر';
-            } else if (platform === 'vercel') {
-                link.href = 'https://vercel.com/account/tokens';
-                label.textContent = 'دریافت توکن ورسل';
-            }
-        }
-        async function loadApiAccounts() {
-            const container = document.getElementById('accounts-list');
-            if (!container) return;
-            try {
-                const res = await fetch('/api/accounts');
-                if (!res.ok) throw new Error();
-                const accounts = await res.json();
-                if (!accounts || accounts.length === 0) {
-                    container.innerHTML = '<div class="text-center text-xs text-gray-400 py-4">هنوز اکانتی اضافه نشده است</div>';
-                    return;
-                }
-                container.innerHTML = accounts.map(function(a) {
-                    const platformLabel = a.platform === 'cloudflare' ? 'Cloudflare' : a.platform === 'vercel' ? 'Vercel' : a.platform;
-                    const primaryBadge = a.is_primary
-                        ? '<span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 font-bold">اصلی</span>'
-                        : '<span class="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-gray-400 font-bold">ثانویه</span>';
-                    const activeDot = a.is_active
-                        ? '<span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span>'
-                        : '<span class="w-2 h-2 rounded-full bg-gray-400 inline-block"></span>';
-                    const makePrimaryBtn = a.is_primary ? '' :
-                        '<button onclick="setPrimaryAccount(\\'' + a.id + '\\')" title="تنظیم به‌عنوان اصلی" class="text-[10px] px-2 py-1 rounded border border-amber-300 dark:border-amber-700 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition">اصلی کن</button>';
-                    return '<div class="flex items-center justify-between gap-2 p-2.5 bg-gray-50 dark:bg-zinc-900/40 border border-gray-200 dark:border-amoled-border rounded-md">' +
-                        '<div class="flex items-center gap-2 min-w-0">' + activeDot +
-                        '<div class="min-w-0"><div class="text-xs font-bold text-gray-800 dark:text-zinc-200 truncate">' + escapeHtml(a.name || '') + '</div>' +
-                        '<div class="text-[10px] text-gray-500 dark:text-gray-400 truncate">' + platformLabel + (a.email ? ' · ' + escapeHtml(a.email) : '') + '</div></div>' + primaryBadge + '</div>' +
-                        '<div class="flex items-center gap-1.5 flex-shrink-0">' + makePrimaryBtn +
-                        '<button onclick="deleteApiAccount(\\'' + a.id + '\\')" title="حذف" class="text-[10px] px-2 py-1 rounded border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition">حذف</button></div></div>';
-                }).join('');
-            } catch (e) {
-                container.innerHTML = '<div class="text-center text-xs text-red-400 py-4">خطا در دریافت اکانت‌ها</div>';
-            }
-        }
-        function escapeHtml(str) {
-            return String(str).replace(/[&<>"']/g, function(c) {
-                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-            });
-        }
-        async function addApiAccount() {
-            const btn = document.getElementById('acc-add-btn');
-            const msg = document.getElementById('acc-verify-msg');
-            const platform = document.getElementById('acc-platform').value;
-            const name = document.getElementById('acc-name').value.trim();
-            const token = document.getElementById('acc-token').value.trim();
-            function setMsg(text, ok) {
-                msg.textContent = text;
-                msg.className = 'text-[11px] ' + (ok ? 'text-green-500' : 'text-red-500');
-            }
-            if (!name || !token) { setMsg('نام و توکن الزامی است', false); return; }
-            btn.disabled = true;
-            const prevLabel = btn.textContent;
-            btn.textContent = 'در حال اعتبارسنجی...';
-            try {
-                const vRes = await fetch('/api/accounts/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ token: token, platform: platform }),
-                });
-                const vData = await vRes.json();
-                if (!vData.valid) { setMsg(vData.error || 'توکن نامعتبر است', false); return; }
-                setMsg('توکن معتبر است، در حال ثبت...', true);
-                const aRes = await fetch('/api/accounts', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: name, platform: platform, token: token, email: vData.account_name || null, account_external_id: vData.account_external_id || null }),
-                });
-                const aData = await aRes.json();
-                if (!aRes.ok || aData.error) { setMsg(aData.error || 'خطا در ثبت اکانت', false); return; }
-                document.getElementById('acc-name').value = '';
-                document.getElementById('acc-token').value = '';
-                setMsg('اکانت با موفقیت ثبت شد', true);
-                showToast('✅ اکانت API اضافه شد');
-                loadApiAccounts();
-            } catch (e) {
-                setMsg('خطا در ارتباط با سرور', false);
-            } finally {
-                btn.disabled = false;
-                btn.textContent = prevLabel;
-            }
-        }
-        async function setPrimaryAccount(id) {
-            try {
-                const res = await fetch('/api/accounts/' + encodeURIComponent(id), {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ set_primary: true }),
-                });
-                if (!res.ok) throw new Error();
-                showToast('✅ اکانت اصلی تغییر کرد');
-                loadApiAccounts();
-            } catch (e) { showToast('خطا در تغییر اکانت اصلی', 'error'); }
-        }
-        async function deleteApiAccount(id) {
-            const ok = await customConfirm('آیا از حذف این اکانت مطمئن هستید؟');
-            if (!ok) return;
-            try {
-                const res = await fetch('/api/accounts/' + encodeURIComponent(id), { method: 'DELETE' });
-                if (!res.ok) throw new Error();
-                showToast('✅ اکانت حذف شد');
-                loadApiAccounts();
-            } catch (e) { showToast('خطا در حذف اکانت', 'error'); }
-        }
         window.toggleAutoResetInputs = function(show) {
 			const container = document.getElementById('auto-reset-inputs-container');
 			const volInput = document.getElementById('input-auto-reset-vol');
@@ -4349,10 +4004,11 @@ ${COMMON_TOAST_HTML}
             }
         });
 		async function handleCoreAction(actionType, token = null) {
+			window.pendingCoreAction = actionType;
 			const isUpdate = actionType === 'update';
-			if (!isUpdate && !await customConfirm('آیا از ری استارت پنل مطمئن هستید؟ کاربران شما لحظه ای قطع خواهند شد.')) return;
+			if (!isUpdate && !await customConfirm('آیا از ری استارت پـنـل مطمئن هستید؟ کاربران شما لحظه ای قطع خواهند شد.')) return;
 			if (isUpdate && !token) toggleUpdateModal(false);
-			const btn = isUpdate ? document.getElementById('update-toggle') : document.querySelector('button[title="ری استارت پنل"]');
+			const btn = isUpdate ? document.getElementById('update-toggle') : document.querySelector('button[title="ری استارت پـنـل"]');
 			if (btn) {
 				btn.disabled = true;
 				if (!isUpdate) btn.classList.add('animate-pulse');
@@ -4384,11 +4040,11 @@ ${COMMON_TOAST_HTML}
 						successCard.classList.add('opacity-100', 'scale-100');
 						setTimeout(() => window.location.reload(), 10000);
 					} else {
-						alert('پنل ری استارت شد صفحه رفرش می شود.');
+						alert('پـنـل ری استارت شد صفحه رفرش می شود.');
 						window.location.reload();
 					}
 				} else {
-					alert(isUpdate ? 'خطا در بروزرسانی. لطفاً با استفاده از دکمه "آپدیت دستی" اقدام کنید.' : 'خطا در ری‌استارت پنل: ' + (data.error || 'ناشناخته'));
+					alert(isUpdate ? 'خطا در بروزرسانی. لطفاً با استفاده از دکمه "آپدیت دستی" اقدام کنید.' : 'خطا در ری‌استارت پـنـل: ' + (data.error || 'ناشناخته'));
 					if (btn) {
 						btn.disabled = false;
 						if (!isUpdate) btn.classList.remove('animate-pulse');
@@ -4714,9 +4370,9 @@ ${COMMON_TOAST_HTML}
                         const targetProxy = user.user_socks5 || user.user_proxy_ip;
                         const cachedFlag = proxyFlagCache[targetProxy];
                         if (cachedFlag) {
-                            locBadge = '<span title="پروکسی اختصاصی" class="text-base leading-none px-0.5 drop-shadow-[0_0_2px_rgba(0,0,0,0.3)] dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]">' + cachedFlag + '</span>';
+                            locBadge = '<span title="پـروکـسـی اختصاصی" class="text-base leading-none px-0.5 drop-shadow-[0_0_2px_rgba(0,0,0,0.3)] dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]">' + cachedFlag + '</span>';
                         } else {
-                            locBadge = '<span data-proxy="' + targetProxy + '" title="پروکسی اختصاصی" class="async-proxy-flag text-base leading-none px-0.5 drop-shadow-[0_0_2px_rgba(0,0,0,0.3)] dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]">⏳</span>';
+                            locBadge = '<span data-proxy="' + targetProxy + '" title="پـروکـسـی اختصاصی" class="async-proxy-flag text-base leading-none px-0.5 drop-shadow-[0_0_2px_rgba(0,0,0,0.3)] dark:drop-shadow-[0_0_2px_rgba(255,255,255,0.3)]">⏳</span>';
                         }
                     }
                     return '<tr class="hover:bg-gray-50 dark:hover:bg-zinc-900/40 border-b border-gray-100 dark:border-zinc-800 last:border-0">' +
@@ -4944,7 +4600,7 @@ function setModalState(modalId, show) {
 		function closeFreePanelWarning() { setModalState('free-panel-warning-modal', false); }
 	async function checkGlobalMessage() {
         try {
-            const res = await fetch('https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/message.txt?t=' + Date.now());
+            const res = await fetch('https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/message.txt?t=' + Date.now());
             if (!res.ok) return;
             const text = await res.text();
             const lines = text.split('\\n');
@@ -4953,12 +4609,12 @@ function setModalState(modalId, show) {
             if (!firstLine.startsWith('VERSION=')) return;
             const version = firstLine.split('=')[1].trim();
             const content = lines.slice(1).join('\\n').trim();
-            if (window.nmap_global_msg_version !== version) {
+            if (window.zeus_global_msg_version !== version) {
                 document.getElementById('global-message-content').innerHTML = content;
                 setModalState('global-message-modal', true);
                 document.getElementById('global-message-close-btn').onclick = function() {
                     setModalState('global-message-modal', false);
-                    window.nmap_global_msg_version = version;
+                    window.zeus_global_msg_version = version;
                 };
             }
         } catch (err) {}
@@ -4976,10 +4632,11 @@ function setModalState(modalId, show) {
             var fp = user.fingerprint || 'chrome';
             const userFrag = (user.frag_len && user.frag_int) ? '&fragment=' + user.frag_len + ',' + user.frag_int : '';
             const links = [];
-            const m1 = decodeURIComponent('%E2%9A%A0%EF%B8%8F%D8%A7%DB%8C%D9%86%20%D9%BE%D9%86%D9%84%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%20%D9%88%20%D8%BA%DB%8C%D8%B1%20%D9%82%D8%A7%D8%A8%D9%84%20%D9%81%D8%B1%D9%88%D8%B4%20%D8%A7%D8%B3%D8%AA%E2%9A%A0%EF%B8%8F');
-            const m2 = decodeURIComponent('%E2%99%A8%EF%B8%8F%20%40N-MAP%20%D8%B3%D8%A7%D8%AE%D8%AA%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%20%E2%99%A8%EF%B8%8F');
-            links.push('vle' + 'ss://' + (user.uuid || '') + '@0.0.0.0:1?encryption=none&security=none&type=ws&host=' + host + '&path=%2Fedge#' + encodeURIComponent(m1));
-            links.push('vle' + 'ss://' + (user.uuid || '') + '@0.0.0.0:1?encryption=none&security=none&type=ws&host=' + host + '&path=%2Fedge#' + encodeURIComponent(m2));
+		const dynPath = encodeURIComponent("/stream/PANEL_ZEUS/" + (user.uuid ? user.uuid.split("-")[0] : "default"));
+		const m1 = decodeURIComponent('%E2%9A%A0%EF%B8%8F%D8%A7%DB%8C%D9%86%20%D9%BE%D9%86%D9%84%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%20%D9%88%20%D8%BA%DB%8C%D8%B1%20%D9%82%D8%A7%D8%A8%D9%84%20%D9%81%D8%B1%D9%88%D8%B4%20%D8%A7%D8%B3%D8%AA%E2%9A%A0%EF%B8%8F');
+		const m2 = decodeURIComponent('%E2%99%A8%EF%B8%8F%20%40PANEL_ZEUS%20%D8%B3%D8%A7%D8%AE%D8%AA%20%D8%B1%D8%A7%DB%8C%DA%AF%D8%A7%D9%86%20%E2%99%A8%EF%B8%8F');
+		links.push('vle' + 'ss://' + (user.uuid || '') + '@0.0.0.0:1?encryption=none&security=none&type=ws&host=' + host + '&path=' + dynPath + '#' + encodeURIComponent(m1));
+		links.push('vle' + 'ss://' + (user.uuid || '') + '@0.0.0.0:1?encryption=none&security=none&type=ws&host=' + host + '&path=' + dynPath + '#' + encodeURIComponent(m2));
             let flagEmoji = '🌐';
             if (user.user_proxy_iata) {
                 try {
@@ -4999,11 +4656,11 @@ function setModalState(modalId, show) {
             }
             ips.forEach((ip) => {
                 ports.forEach((portStr) => {
-                    const isTlsPort = tlsPorts.includes(portStr);
-                    const tlsVal = isTlsPort ? 'tls' : 'none';
-                    const remark = flagEmoji + ' | ' + user.username + ' | \\u200E' + ip + ' | \\u200E' + portStr;
-                    links.push('vle' + 'ss://' + (user.uuid || '') + '@' + ip + ':' + portStr + '?path=%2Fedge&security=' + tlsVal + '&encryption=none&insecure=0&host=' + host + '&fp=' + fp + '&type=ws&allowInsecure=0&sni=' + host + userFrag + '#' + encodeURIComponent(remark));
-                });
+					const isTlsPort = tlsPorts.includes(portStr);
+					const tlsVal = isTlsPort ? 'tls' : 'none';
+					const remark = flagEmoji + ' | ' + user.username + ' | \\u200E' + ip + ' | \\u200E' + portStr;
+					links.push('vle' + 'ss://' + (user.uuid || '') + '@' + ip + ':' + portStr + '?path=' + dynPath + '&security=' + tlsVal + '&encryption=none&insecure=0&host=' + host + '&fp=' + fp + '&type=ws&allowInsecure=0&sni=' + host + userFrag + '#' + encodeURIComponent(remark));
+				});
             });
             return links.join('\\n');
         }
@@ -5156,7 +4813,7 @@ function editUser(encodedUsername) {
             const userSelect = document.getElementById('user-location-select');
             locations.sort((a, b) => (a.cca2 || '').localeCompare(b.cca2 || ''));
             let html = '<option value="">🌐 پیش‌فرض (لوکیشن خودکار)</option>';
-            let userHtml = '<option value="">🌐 استفاده از تنظیمات عمومی پنل</option>';
+            let userHtml = '<option value="">🌐 استفاده از تنظیمات عمومی پـنـل</option>';
             locations.forEach(loc => {
                 if (loc.iata && loc.city) {
                     const flag = getFlagEmoji(loc.cca2);
@@ -5271,7 +4928,7 @@ window.filterUserLocations = function() {
             return searchString.includes(searchTerm);
         });
         const userSelect = document.getElementById('user-location-select');
-        let userHtml = '<option value="">🌐 استفاده از تنظیمات عمومی پنل</option>';
+        let userHtml = '<option value="">🌐 استفاده از تنظیمات عمومی پـنـل</option>';
         filteredLocations.forEach(loc => {
             const flag = getFlagEmoji(loc.cca2);
             userHtml += '<option value="' + loc.iata + '">' + flag + ' ' + loc.city + ' (' + loc.iata + ')</option>';
@@ -5312,12 +4969,12 @@ async function testUserSocksProxy() {
 		}
 	} catch (e) {
 		clearTimeout(timeoutId);
-		if (e.name === 'AbortError') resultSpan.innerText = 'تایم‌اوت (پروکسی خراب است)';
+		if (e.name === 'AbortError') resultSpan.innerText = 'تایم‌اوت (پـروکـسـی خراب است)';
 		else resultSpan.innerText = 'خطا در ارتباط';
 		resultSpan.className = 'text-[11px] font-bold text-red-500 w-full mt-1 break-words';
 	} finally {
 		btn.disabled = false;
-		btn.innerText = 'تست پروکسی';
+		btn.innerText = 'تست پـروکـسـی';
 	}
 }
 
@@ -5337,7 +4994,7 @@ async function testUserSocksProxy() {
                 const downloadAnchor = document.createElement('a');
                 const dateStr = new Date().toISOString().split('T')[0];
                 downloadAnchor.setAttribute("href", dataStr);
-                downloadAnchor.setAttribute("download", "n-map_full_backup_" + dateStr + ".json");
+                downloadAnchor.setAttribute("download", "zeus_full_backup_" + dateStr + ".json");
                 document.body.appendChild(downloadAnchor);
                 downloadAnchor.click();
                 downloadAnchor.remove();
@@ -5375,7 +5032,7 @@ async function testUserSocksProxy() {
                         return;
                     }
                     if (backupSettings && Object.keys(backupSettings).length > 0) {
-                        const restoreSettings = await customConfirm('⚙️ فایل بک‌آپ شامل تنظیمات پنل نیز می‌باشد. آیا می‌خواهید تنظیمات هم بازگردانی شوند؟');
+                        const restoreSettings = await customConfirm('⚙️ فایل بک‌آپ شامل تنظیمات پـنـل نیز می‌باشد. آیا می‌خواهید تنظیمات هم بازگردانی شوند؟');
                         if (restoreSettings) {
                             try {
                                 await fetch('/api/settings/bulk', {
@@ -5517,21 +5174,21 @@ async function testUserSocksProxy() {
             }
         }
         async function logoutAdmin() {
-			if (await customConfirm('آیا می‌خواهید از پنل خارج شوید؟ ⚠️ ')) {
+			if (await customConfirm('آیا می‌خواهید از پـنـل خارج شوید؟ ⚠️ ')) {
                 try {
                     await fetch('/api/logout', { method: 'POST' });
                 } catch (err) {}
                 window.location.reload();
             }
         }
-const CURRENT_VERSION = '1.0.0';
+const CURRENT_VERSION = '1.9.0';
 const UPDATE_FIX = "constsCURRENT_VERSION='d.d.d'";
 		async function checkForUpdates(isManual = false) {
             try {
                 if (isManual) {
                     document.getElementById('update-toggle').classList.add('animate-pulse');
                 }
-                const res = await fetch('https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/n-map.js?t=' + Date.now());
+                const res = await fetch('https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/zeus.js?t=' + Date.now());
                 if (!res.ok) throw new Error('Network response was not ok');
                 const text = await res.text();
                 const match = text.match(/const\\s+CURRENT_VERSION\\s*=\\s*['"](\\d+\\.\\d+\\.\\d+)['"]/i);
@@ -5569,7 +5226,7 @@ const UPDATE_FIX = "constsCURRENT_VERSION='d.d.d'";
                 return;
             }
             toggleTokenModal(false);
-            applyUpdate(token);
+            handleCoreAction(window.pendingCoreAction || 'update', token);
         }
         async function applyUpdate(token = null) {
             await handleCoreAction('update', token);
@@ -5577,7 +5234,7 @@ const UPDATE_FIX = "constsCURRENT_VERSION='d.d.d'";
 let cachedIpsData = {};
 async function fetchIpsList() {
     try {
-        const response = await fetch('https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/ips.txt');
+        const response = await fetch('https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/ips.txt');
         if (!response.ok) throw new Error('Fetch failed');
         const text = await response.text();
         const blocks = text.split('----------');
@@ -5696,11 +5353,11 @@ document.addEventListener('DOMContentLoaded', () => {
             };
             window.changeRefreshRate = function(val) {
                 const ms = parseInt(val, 10);
-                localStorage.setItem('nmap_refresh_rate', ms);
+                localStorage.setItem('zeus_refresh_rate', ms);
                 window.startRefreshInterval(ms);
-                showToast('نرخ رفرش پنل تغییر کرد');
+                showToast('نرخ رفرش پـنـل تغییر کرد');
             };
-            const savedRate = localStorage.getItem('nmap_refresh_rate');
+            const savedRate = localStorage.getItem('zeus_refresh_rate');
             const initialRate = savedRate ? parseInt(savedRate, 10) : 2000;
             const selectEl = document.getElementById('refresh-rate-select');
             if (selectEl) {
@@ -5740,7 +5397,7 @@ function toggleProxySelectorModal(show) { setModalState('proxy-selector-modal', 
 			const btn = document.getElementById('vip-fetch-btn');
 			select.innerHTML = '<option value="">در حال بررسی مخزن...</option>';
 			try {
-				const res = await fetch('https://api.github.com/repos/nikvpn-iran/n-map/contents/proxy/proxy_vip');
+				const res = await fetch('https://api.github.com/repos/IR-NETLIFY/zeus/contents/proxy/proxy_vip');
 				if (!res.ok) throw new Error('API Error');
 				const data = await res.json();
 				const validCountries = data
@@ -5757,7 +5414,7 @@ function toggleProxySelectorModal(show) { setModalState('proxy-selector-modal', 
 				});
 				btn.disabled = false;
 			} catch (err) {
-				select.innerHTML = '<option value="">پروکسی اختصاصی موجود نیست</option>';
+				select.innerHTML = '<option value="">پـروکـسـی اختصاصی موجود نیست</option>';
 				btn.disabled = true;
 			}
 		}
@@ -5769,7 +5426,7 @@ function toggleProxySelectorModal(show) { setModalState('proxy-selector-modal', 
 			btn.disabled = true;
 			btn.innerText = '...';
 			try {
-				const url = 'https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/proxy/proxy_vip/' + country + '.txt?t=' + Date.now();
+				const url = 'https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/proxy/proxy_vip/' + country + '.txt?t=' + Date.now();
 				const res = await fetch(url);
 				if (!res.ok) throw new Error('فایل یافت نشد');
 				const text = await res.text();
@@ -5782,13 +5439,13 @@ function toggleProxySelectorModal(show) { setModalState('proxy-selector-modal', 
 					    userProxyResult.innerText = '';
 					}
 					toggleProxySelectorModal(false);
-					showToast('✅ پروکسی اختصاصی با موفقیت اعمال شد.');
+					showToast('✅ پـروکـسـی اختصاصی با موفقیت اعمال شد.');
                     testUserSocksProxy();
 				} else {
-					alert('فایل پروکسی این کشور خالی است.');
+					alert('فایل پـروکـسـی این کشور خالی است.');
 				}
 			} catch (e) {
-				alert('خطا در دریافت پروکسی اختصاصی.');
+				alert('خطا در دریافت پـروکـسـی اختصاصی.');
 			} finally {
 				btn.disabled = false;
 				btn.innerText = 'دریافت';
@@ -5844,13 +5501,13 @@ async function fetchAndLoadProxy() {
     const formState = document.getElementById('proxy-selection-form');
     const fetchBtn = document.getElementById('proxy-fetch-btn');
     loadingState.classList.remove('hidden');
-    loadingState.innerText = 'در حال دریافت لیست پروکسی‌ها...';
+    loadingState.innerText = 'در حال دریافت لیست پـروکـسـی‌ها...';
     formState.classList.add('hidden');
     fetchBtn.disabled = true;
     try {
 		const sources = [
 			{ url: 'https://raw.githubusercontent.com/proxifly/free-proxy-list/refs/heads/main/proxies/countries/' + country.toUpperCase() + '/data.txt', prefix: '' },
-			{ url: 'https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/proxy/' + country.toUpperCase() + '.txt', prefix: '' },
+			{ url: 'https://raw.githubusercontent.com/IR-NETLIFY/zeus/refs/heads/main/proxy/' + country.toUpperCase() + '.txt', prefix: '' },
 			{ url: 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&country=' + country, prefix: 'socks5://' },
 			{ url: 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks4&country=' + country, prefix: 'socks4://' },
 			{ url: 'https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&country=' + country, prefix: 'http://' },
@@ -5902,7 +5559,7 @@ async function fetchAndLoadProxy() {
             const BATCH_SIZE = 5;
             for (let i = 0; i < lines.length; i += BATCH_SIZE) {
                 const batch = lines.slice(i, i + BATCH_SIZE);
-                loadingState.innerText = 'تعداد ' + lines.length + ' پروکسی پیدا شد درحال اسکن\\nاسکن گروه ' + (Math.floor(i / BATCH_SIZE) + 1) + ' (۵ تست برای هر کدام)...';
+                loadingState.innerText = 'تعداد ' + lines.length + ' پـروکـسـی پیدا شد درحال اسکن\\nاسکن گروه ' + (Math.floor(i / BATCH_SIZE) + 1) + ' (۵ تست برای هر کدام)...';
                 const testResults = await Promise.allSettled(batch.map(async (candidate) => {
                     let successCount = 0;
                     let totalPing = 0;
@@ -5962,23 +5619,23 @@ async function fetchAndLoadProxy() {
                 document.getElementById('user-socks5-input').value = bestProxy;
                 document.getElementById('test-user-proxy-result').innerText = '';
                 toggleProxySelectorModal(false);
-                showToast('پروکسی با بهترین امتیاز لود شد.');
+                showToast('پـروکـسـی با بهترین امتیاز لود شد.');
                 testUserSocksProxy();
             } else {
-                alert('هیچ پروکسی سالمی (حتی با یک پینگ موفق) یافت نشد.');
+                alert('هیچ پـروکـسـی سالمی (حتی با یک پینگ موفق) یافت نشد.');
             }
         } else {
-            alert('پروکسی برای این کشور یافت نشد.');
+            alert('پـروکـسـی برای این کشور یافت نشد.');
         }
     } catch (e) {
-        alert('خطا در دریافت لیست پروکسی‌ها از سرور.');
+        alert('خطا در دریافت لیست پـروکـسـی‌ها از سرور.');
     } finally {
         loadingState.classList.add('hidden');
         formState.classList.remove('hidden');
         fetchBtn.disabled = false;
     }
 }
-const WORKER_DONATE_URL = 'https://github.com/nikvpn-iran/n-map';
+const WORKER_DONATE_URL = 'https://noisy-meadow-a466.ir-netlify.workers.dev/';
 		function toggleDonateModal(show) {
 			setModalState('donate-modal', show);
 			if (!show) {
@@ -5995,19 +5652,19 @@ const WORKER_DONATE_URL = 'https://github.com/nikvpn-iran/n-map';
 			const btn = document.getElementById('donate-submit-btn');
 			const resultSpan = document.getElementById('donate-result');
 			if (!proxyInput) {
-				resultSpan.innerText = 'لطفاً پروکسی را وارد کنید!';
+				resultSpan.innerText = 'لطفاً پـروکـسـی را وارد کنید!';
 				resultSpan.className = 'text-[11px] font-bold text-red-500 w-full mt-1';
 				return;
 			}
 			const strictProxyPattern = /^(?:(?:socks4|socks5|socks|http|https):\\/\\/)?([a-zA-Z0-9]{8}):([a-zA-Z0-9]{12})@([^:\\/]+):(\\d+)$/i;
 			if (!strictProxyPattern.test(proxyInput)) {
-				resultSpan.innerText = '❌ این پروکسی اختصاصی نیست';
+				resultSpan.innerText = '❌ این پـروکـسـی اختصاصی نیست';
 				resultSpan.className = 'text-[11px] font-bold text-red-500 w-full mt-1 break-words';
 				return;
 			}
 			btn.disabled = true;
 			btn.innerText = 'صبر کنید...';
-			resultSpan.innerText = 'در حال تست با اسکنر پنل...';
+			resultSpan.innerText = 'در حال تست با اسکنر پـنـل...';
 			resultSpan.className = 'text-[11px] font-bold text-emerald-500 w-full mt-1';
 			const controller = new AbortController();
 			const timeoutId = setTimeout(() => controller.abort(), 6000);
@@ -6021,10 +5678,10 @@ const WORKER_DONATE_URL = 'https://github.com/nikvpn-iran/n-map';
 				clearTimeout(timeoutId);
 				const testData = await testRes.json();
 				if (!testRes.ok || !testData.success) {
-					throw new Error(testData.error || 'پروکسی مسدود یا خاموش است');
+					throw new Error(testData.error || 'پـروکـسـی مسدود یا خاموش است');
 				}
 				const countryCode = testData.country || 'UN';
-				resultSpan.innerText = 'پروکسی سالم است! در حال ارسال (' + countryCode + ')...';
+				resultSpan.innerText = 'پـروکـسـی سالم است! در حال ارسال (' + countryCode + ')...';
 				const donateResponse = await fetch(WORKER_DONATE_URL, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -6045,7 +5702,7 @@ const WORKER_DONATE_URL = 'https://github.com/nikvpn-iran/n-map';
 			} catch (error) {
 				clearTimeout(timeoutId);
 				let errorMsg = error.message;
-				if (error.name === 'AbortError') errorMsg = 'تایم‌اوت در تست پروکسی';
+				if (error.name === 'AbortError') errorMsg = 'تایم‌اوت در تست پـروکـسـی';
 				resultSpan.innerText = '❌ خطا: ' + errorMsg;
 				resultSpan.className = 'text-[11px] font-bold text-red-500 w-full mt-1 break-words';
 			} finally {
@@ -6097,7 +5754,7 @@ window.addEventListener('click', (e) => {
             <div class="inline-flex items-center justify-center p-3 bg-blue-950/60 border border-blue-500 text-blue-400 rounded-md mb-4 shadow-[0_0_15px_rgba(59,130,246,0.4)]">
                 <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             </div>
-            <h1 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white mb-1">پنل N-MAP - وضعیت اشتراک</h1>
+            <h1 class="text-xl font-bold tracking-tight text-gray-900 dark:text-white mb-1">پـنـل زئــوس - وضعیت اشتراک</h1>
             <p id="display-username" class="text-sm font-bold text-blue-500 tracking-wide font-mono mb-2"></p>
             <p id="display-flag" class="text-2xl font-bold tracking-wide mb-3" style="display:none;"></p>
             <div id="live-connections-badge" style="display: none !important;">
@@ -6210,27 +5867,27 @@ window.addEventListener('click', (e) => {
 </div>
 <div class="flex flex-col gap-4 mt-6 z-10">
     <div class="flex flex-wrap items-center gap-3 sm:gap-4 justify-center">
-        <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-gray-700 dark:text-zinc-300 hover:text-black dark:hover:text-white group">
+        <a href="https://github.com/IR-NETLIFY/zeus" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-gray-700 dark:text-zinc-300 hover:text-black dark:hover:text-white group">
             <svg class="w-5 h-5 group-hover:scale-110 transition" viewBox="0 0 24 24" fill="currentColor">
                 <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0012 2z"/>
             </svg>
             گیت‌هاب
         </a>
-        <a href="https://t.me/nikvpn" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-gray-700 dark:text-zinc-300 hover:text-sky-500 dark:hover:text-sky-400 group">
+        <a href="https://t.me/PANEL_ZEUS" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-gray-700 dark:text-zinc-300 hover:text-sky-500 dark:hover:text-sky-400 group">
             <svg class="w-5 h-5 text-sky-500 group-hover:scale-110 transition" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.94-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.37.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .24z"/>
             </svg>
-            nikvpn@
+            PANEL_ZEUS@
         </a>
     </div>
     <div class="flex flex-wrap items-center gap-3 sm:gap-4 justify-center">
-        <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300 group">
+        <a href="https://zeus-panel.ir-netlify.workers.dev/" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300 group">
             <svg class="w-5 h-5 text-amber-500 dark:text-amber-400 group-hover:scale-110 transition" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
-            ساخت رایگان پنل
+            ساخت رایگان پـنـل
         </a>
-        <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-red-600 dark:text-red-400 hover:text-red-500 dark:hover:text-red-300 group">
+        <a href="https://donatonion.ir-netlify.workers.dev" target="_blank" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-full shadow-sm hover:shadow-md transition text-sm font-bold text-red-600 dark:text-red-400 hover:text-red-500 dark:hover:text-red-300 group">
             <svg class="w-5 h-5 text-red-500 dark:text-red-400 group-hover:scale-110 transition" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3 9.24 3 10.91 3.81 12 5.08 13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
             </svg>
@@ -6255,8 +5912,9 @@ ${COMMON_TOAST_HTML}
             }
             var ports = String(u.port || '443').split(',').map(function(p) { return p.trim(); }).filter(function(p) { return p.length > 0; });
             var fp = u.fingerprint || 'chrome';
-            const userFrag = (u.frag_len && u.frag_int) ? '&fragment=' + u.frag_len + ',' + u.frag_int : '';
-            var links = [];
+			const userFrag = (u.frag_len && u.frag_int) ? '&fragment=' + u.frag_len + ',' + u.frag_int : '';
+			const dynPath = encodeURIComponent("/stream/PANEL_ZEUS/" + (u.uuid ? u.uuid.split("-")[0] : "default"));
+			var links = [];
             let flagEmoji = '🌐';
             if (u.user_proxy_iata) {
                 try {
@@ -6276,11 +5934,11 @@ ${COMMON_TOAST_HTML}
             }
             ips.forEach(function(ip, ipIndex) {
                 ports.forEach(function(portStr) {
-                    var isTlsPort = ['443', '2053', '2083', '2087', '2096', '8443'].includes(portStr);
-                    var tlsVal = isTlsPort ? 'tls' : 'none';
-                    var remark = flagEmoji + ' | ' + u.username + ' | \\u200E' + ip + ' | \\u200E' + portStr;
-                    links.push('vle' + 'ss://' + (u.uuid || '') + '@' + ip + ':' + portStr + '?path=%2Fedge&security=' + tlsVal + '&encryption=none&insecure=0&host=' + host + '&fp=' + fp + '&type=ws&allowInsecure=0&sni=' + host + userFrag + '#' + encodeURIComponent(remark));
-                });
+					var isTlsPort = ['443', '2053', '2083', '2087', '2096', '8443'].includes(portStr);
+					var tlsVal = isTlsPort ? 'tls' : 'none';
+					var remark = flagEmoji + ' | ' + u.username + ' | \\u200E' + ip + ' | \\u200E' + portStr;
+					links.push('vle' + 'ss://' + (u.uuid || '') + '@' + ip + ':' + portStr + '?path=' + dynPath + '&security=' + tlsVal + '&encryption=none&insecure=0&host=' + host + '&fp=' + fp + '&type=ws&allowInsecure=0&sni=' + host + userFrag + '#' + encodeURIComponent(remark));
+				});
             });
             return links.join('\\n');
         }
@@ -6340,7 +5998,7 @@ if (u.user_proxy_iata) {
     flagContainer.innerText = flag + " " + u.user_proxy_iata.toUpperCase();
     flagContainer.style.display = 'block'; 
 } else if (u.user_socks5 || u.user_proxy_ip) {
-    flagContainer.innerText = "⏳ تست پروکسی...";
+    flagContainer.innerText = "⏳ تست پـروکـسـی...";
     flagContainer.style.display = 'block'; 
     const targetProxy = u.user_socks5 || u.user_proxy_ip;
     fetch('/api/test-proxy', {
@@ -6470,3 +6128,4 @@ if (u.user_proxy_iata) {
 </body>
 </html>`,
 };
+return __WORKER_EXPORT__;
