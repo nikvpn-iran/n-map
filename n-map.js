@@ -2701,16 +2701,16 @@ const COMMON_HEAD = `<link rel="icon" type="image/jpeg" href="${BRANDING.logoUrl
 <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>
 	tailwind.config = {
 		darkMode: 'class',
 		theme: {
 			extend: {
-				fontFamily: { sans: ['Vazirmatn', 'sans-serif'], mono: ['Space Grotesk', 'ui-monospace', 'monospace'] },
+				fontFamily: { sans: ['JetBrains Mono', 'Vazirmatn', 'ui-monospace', 'monospace'], mono: ['JetBrains Mono', 'ui-monospace', 'monospace'] },
 				colors: {
-					amoled: { bg: '#0a0612', card: '#130c22', input: '#1b1030', border: '#2d1d4d' },
-					brand: { DEFAULT: '#a855f7', light: '#c084fc', dark: '#7c3aed', glow: '#8b5cf6' }
+					amoled: { bg: '#060709', card: '#0c0e12', input: '#111318', border: '#1e2228' },
+					brand: { DEFAULT: '#2dd4bf', light: '#5eead4', dark: '#14b8a6', glow: '#2dd4bf' }
 				}
 			}
 		}
@@ -2952,9 +2952,15 @@ Commercial support is available at
     </script>
     ${COMMON_HEAD}
     <style>
-        body { font-family: 'Vazirmatn', sans-serif; }
+        body { font-family: 'JetBrains Mono', 'Vazirmatn', ui-monospace, monospace; }
 		.dark input[type="checkbox"] {
-            filter: invert(1) hue-rotate(180deg);
+            filter: invert(1) hue-rotate(180deg) brightness(1.1);
+            accent-color: #2dd4bf;
+        }
+        /* dark-web / terminal accents: teal glow on interactive focus */
+        .dark input:focus, .dark select:focus, .dark textarea:focus {
+            border-color: #2dd4bf !important;
+            box-shadow: 0 0 0 1px rgba(45,212,191,0.35), 0 0 12px -2px rgba(45,212,191,0.25) !important;
         }
         ::-webkit-scrollbar {
             width: 6px;
@@ -2972,29 +2978,53 @@ Commercial support is available at
             background: #9ca3af;
         }
         .dark ::-webkit-scrollbar-track {
-            background: #0a0612;
+            background: #060709;
         }
         .dark ::-webkit-scrollbar-thumb {
-            background: #2d1d4d;
-            border-radius: 4px;
+            background: #1e2228;
+            border-radius: 2px;
         }
         .dark ::-webkit-scrollbar-thumb:hover {
-            background: #7c3aed;
+            background: #2dd4bf;
         }
         * {
             scrollbar-width: thin;
             scrollbar-color: #d1d5db #f3f4f6;
         }
         .dark * {
-            scrollbar-color: #2d1d4d #0a0612;
+            scrollbar-color: #1e2228 #060709;
         }
+        /* faint terminal grid + soft top glow */
         .dark body {
-            background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124, 58, 237, 0.12), transparent);
+            background-color: #060709;
+            background-image:
+                radial-gradient(ellipse 70% 45% at 50% -10%, rgba(45,212,191,0.07), transparent),
+                linear-gradient(rgba(45,212,191,0.035) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(45,212,191,0.035) 1px, transparent 1px);
+            background-size: 100% 100%, 44px 44px, 44px 44px;
             background-attachment: fixed;
         }
-        .font-mono, [dir="ltr"], #panel-version, [id^="stat-"] {
-            font-family: 'Space Grotesk', 'Vazirmatn', ui-monospace, monospace;
+        /* neon hairline under the sticky header */
+        .dark header {
+            box-shadow: 0 1px 0 0 rgba(45,212,191,0.30), 0 8px 24px -12px rgba(0,0,0,0.8) !important;
+            border-bottom-color: rgba(45,212,191,0.12) !important;
         }
+        /* tighten corners for a technical feel */
+        .dark .rounded-md { border-radius: 4px; }
+        .dark .rounded-xl { border-radius: 6px; }
+        /* mono emphasis on numeric / latin bits */
+        .font-mono, [dir="ltr"], #panel-version, [id^="stat-"] {
+            font-family: 'JetBrains Mono', ui-monospace, monospace;
+            letter-spacing: -0.01em;
+        }
+        /* subtle animated caret vibe on brand name */
+        .dark h1 > span:first-of-type::after {
+            content: '_';
+            color: #2dd4bf;
+            animation: blinkCaret 1.1s step-end infinite;
+            margin-inline-start: 1px;
+        }
+        @keyframes blinkCaret { 50% { opacity: 0; } }
         @media (min-width: 769px) {
             header, main { zoom: 1.18; }
         }
