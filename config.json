@@ -1,0 +1,28 @@
+{
+  "_comment": "N-MAP live config. Edit this file on GitHub to update links/popups WITHOUT redeploying the worker. The panel fetches it on load.",
+
+  "social": [
+    { "label": "Telegram", "icon": "telegram", "url": "https://t.me/nikvpn" },
+    { "label": "GitHub", "icon": "github", "url": "https://github.com/nikvpn-iran/n-map" }
+  ],
+
+  "donateFiat": [
+    { "label": "حمایت مالی (ریالی)", "url": "https://github.com/nikvpn-iran/n-map" }
+  ],
+
+  "wallets": [
+    { "label": "USDT (TRC20)", "value": "" },
+    { "label": "TON", "value": "" },
+    { "label": "BTC", "value": "" }
+  ],
+
+  "popup": {
+    "enabled": false,
+    "id": "welcome-2025",
+    "title": "پیام همگانی",
+    "html": "<p>متن پیام یا تبلیغ خود را اینجا بنویسید. می‌توانید از تگ‌های HTML مثل <b>بولد</b> و لینک استفاده کنید.</p>",
+    "imageUrl": "",
+    "buttonText": "متوجه شدم",
+    "buttonUrl": ""
+  }
+}

@@ -5762,6 +5762,47 @@ function copyWalletAddress(btn, encoded) {
         setTimeout(function() { btn.innerHTML = orig; }, 1500);
     }).catch(function() {});
 }
+// ماژول کانفیگ زنده: لینک‌ها و پاپ‌آپ را از config.json روی گیت‌هاب می‌خواند
+// تا بدون دیپلوی مجدد Worker قابل مدیریت باشند.
+async function loadLiveConfig() {
+    try {
+        const res = await fetch('https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/config.json?t=' + Date.now());
+        if (!res.ok) return;
+        const cfg = await res.json();
+        // ادغام لینک‌ها روی BRANDING فعلی و رندر مجدد
+        window.BRANDING = window.BRANDING || {};
+        if (Array.isArray(cfg.social)) window.BRANDING.social = cfg.social;
+        if (Array.isArray(cfg.donateFiat)) window.BRANDING.donateFiat = cfg.donateFiat;
+        if (Array.isArray(cfg.wallets)) window.BRANDING.wallets = cfg.wallets;
+        renderBrandingLinks();
+        // پاپ‌آپ / تبلیغ
+        if (cfg.popup && cfg.popup.enabled) showLivePopup(cfg.popup);
+    } catch (e) {}
+}
+function showLivePopup(p) {
+    try {
+        const popupId = p.id || 'popup';
+        // اگر کاربر همین نسخه از پاپ‌آپ را قبلاً بسته، دوباره نشان نده
+        if (localStorage.getItem('nmap_popup_seen') === popupId) return;
+        const modal = document.getElementById('global-message-modal');
+        const contentEl = document.getElementById('global-message-content');
+        const btn = document.getElementById('global-message-close-btn');
+        if (!modal || !contentEl || !btn) return;
+        const titleEl = modal.querySelector('h3');
+        if (titleEl && p.title) titleEl.textContent = p.title;
+        let html = '';
+        if (p.imageUrl) html += '<img src="' + p.imageUrl + '" alt="" class="w-full rounded-md mb-3 object-cover" onerror="this.style.display=\\'none\\'">';
+        html += (p.html || '');
+        contentEl.innerHTML = html;
+        if (p.buttonText) btn.textContent = p.buttonText;
+        setModalState('global-message-modal', true);
+        btn.onclick = function() {
+            setModalState('global-message-modal', false);
+            try { localStorage.setItem('nmap_popup_seen', popupId); } catch (e) {}
+            if (p.buttonUrl) window.open(p.buttonUrl, '_blank', 'noopener');
+        };
+    } catch (e) {}
+}
 document.addEventListener('DOMContentLoaded', () => {
 			const freeModal = document.getElementById('free-panel-warning-modal');
             const freeCard = freeModal.querySelector('div');
@@ -5772,6 +5813,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const versionBadge = document.getElementById('panel-version');
             if (versionBadge) versionBadge.innerText = 'v' + CURRENT_VERSION;
             renderBrandingLinks();
+            loadLiveConfig();
             renderPortCheckboxes();
             loadUsers();
             loadLocations();
