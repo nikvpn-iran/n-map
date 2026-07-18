@@ -1718,7 +1718,7 @@ async function handlevIees(env, storedData = null, ctx = null, request = null) {
 							} else {
 							let activeProxyIP = proxyIP;
 							if (user?.user_proxy_iata) {
-								activeProxyIP = user.user_proxy_iata.toLowerCase() + ".proxyip.cmliussss.net";
+								activeProxyIP = "";
 							} else if (user?.user_proxy_ip) {
 								activeProxyIP = user.user_proxy_ip;
 							}
@@ -2654,16 +2654,64 @@ async function connectHttp(proxyStr, destAddr, destPort, initialData) {
 		throw e;
 	}
 }
-const COMMON_HEAD = `<script src="https://cdn.tailwindcss.com"></script>
+// ======================================================================
+//  BRANDING / LINKS  —  ویرایش این بخش برای تغییر لینک‌ها، لوگو و آدرس‌ها
+//  همه‌ی لینک‌های سوشال مدیا، دونیت و آدرس‌های ولت اینجا کنترل می‌شوند.
+//  برای افزودن آدرس جدید کافیست یک آیتم به آرایه‌ی مربوطه اضافه کنید.
+// ======================================================================
+const BRANDING = {
+	// نام برند و لوگو (لوگو به‌صورت لینک تصویر — در favicon و هدر استفاده می‌شود)
+	brandName: "NikVPN",
+	panelTitle: "NikVPN Panel",
+	logoUrl: "https://raw.githubusercontent.com/nikvpn-iran/n-map/refs/heads/main/logo.jpg",
+
+	// لینک‌های شبکه‌های اجتماعی — هر تعداد که خواستید اضافه کنید
+	// icon: یکی از کلیدهای SOCIAL_ICONS (telegram, github, instagram, twitter, youtube, website, email)
+	social: [
+		{ label: "Telegram", icon: "telegram", url: "https://t.me/nikvpn" },
+		{ label: "GitHub", icon: "github", url: "https://github.com/nikvpn-iran/n-map" },
+	],
+
+	// لینک‌های حمایت مالی ریالی (درگاه‌ها، لینک پرداخت و ...)
+	donateFiat: [
+		{ label: "حمایت مالی (ریالی)", url: "https://github.com/nikvpn-iran/n-map" },
+	],
+
+	// آدرس‌های کیف پول رمزارز — value همان آدرس ولت است که کپی می‌شود
+	wallets: [
+		{ label: "USDT (TRC20)", value: "" },
+		{ label: "TON", value: "" },
+		{ label: "BTC", value: "" },
+	],
+};
+// آیکون‌های SVG برای شبکه‌های اجتماعی (کلید = مقدار فیلد icon در BRANDING.social)
+const SOCIAL_ICONS = {
+	telegram: '<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.94-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.37.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .24z"/></svg>',
+	github: '<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>',
+	instagram: '<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z"/></svg>',
+	twitter: '<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>',
+	youtube: '<svg viewBox="0 0 24 24" fill="currentColor" class="w-5 h-5"><path d="M23.498 6.186a3.016 3.016 0 00-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 00.502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 002.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 002.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>',
+	website: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
+	email: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-5 h-5"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/></svg>',
+};
+const COMMON_HEAD = `<link rel="icon" type="image/jpeg" href="${BRANDING.logoUrl}">
+<link rel="apple-touch-icon" href="${BRANDING.logoUrl}">
+<script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <link href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css" rel="stylesheet" type="text/css" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>
 	tailwind.config = {
 		darkMode: 'class',
 		theme: {
 			extend: {
-				fontFamily: { sans: ['Vazirmatn', 'sans-serif'] },
-				colors: { amoled: { bg: '#000105', card: '#040914', input: '#081224', border: '#102040' } }
+				fontFamily: { sans: ['Vazirmatn', 'sans-serif'], mono: ['Space Grotesk', 'ui-monospace', 'monospace'] },
+				colors: {
+					amoled: { bg: '#0a0612', card: '#130c22', input: '#1b1030', border: '#2d1d4d' },
+					brand: { DEFAULT: '#a855f7', light: '#c084fc', dark: '#7c3aed', glow: '#8b5cf6' }
+				}
 			}
 		}
 	}
@@ -2892,13 +2940,15 @@ Commercial support is available at
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>N-MAP</title>
+    <title>${BRANDING.panelTitle}</title>
     <script>
         const originalWarn = console.warn;
         console.warn = (...args) => {
             if (typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) return;
             originalWarn(...args);
         };
+        window.BRANDING = ${JSON.stringify(BRANDING)};
+        window.SOCIAL_ICONS = ${JSON.stringify(SOCIAL_ICONS)};
     </script>
     ${COMMON_HEAD}
     <style>
@@ -2922,20 +2972,28 @@ Commercial support is available at
             background: #9ca3af;
         }
         .dark ::-webkit-scrollbar-track {
-            background: #000105; 
+            background: #0a0612;
         }
         .dark ::-webkit-scrollbar-thumb {
-            background: #102040; 
+            background: #2d1d4d;
+            border-radius: 4px;
         }
         .dark ::-webkit-scrollbar-thumb:hover {
-            background: #172e5c;
+            background: #7c3aed;
         }
         * {
             scrollbar-width: thin;
             scrollbar-color: #d1d5db #f3f4f6;
         }
         .dark * {
-            scrollbar-color: #102040 #000105;
+            scrollbar-color: #2d1d4d #0a0612;
+        }
+        .dark body {
+            background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(124, 58, 237, 0.12), transparent);
+            background-attachment: fixed;
+        }
+        .font-mono, [dir="ltr"], #panel-version, [id^="stat-"] {
+            font-family: 'Space Grotesk', 'Vazirmatn', ui-monospace, monospace;
         }
         @media (min-width: 769px) {
             header, main { zoom: 1.18; }
@@ -2954,35 +3012,15 @@ Commercial support is available at
     </style>
 </head>
 <body class="bg-gray-50 text-gray-900 dark:bg-amoled-bg dark:text-zinc-100 min-h-screen transition-colors duration-200">
-    <header class="border-b border-gray-200 dark:border-amoled-border bg-white dark:bg-amoled-card px-4 py-4">
+    <header class="border-b border-gray-200 dark:border-amoled-border bg-white/95 dark:bg-amoled-card/80 dark:backdrop-blur-xl px-4 py-4 sticky top-0 z-40 dark:shadow-lg dark:shadow-black/20">
         <div class="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
             <div class="flex flex-row flex-wrap justify-center items-center gap-3 w-full md:w-auto">
                 <h1 class="text-lg font-bold flex items-center gap-2" dir="ltr">
-                    N-MAP
-                    <span id="panel-version" class="text-xs px-2 py-0.5 font-semibold bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 rounded-full">v1.5.10</span>
+                    <img src="${BRANDING.logoUrl}" alt="${BRANDING.brandName}" class="w-7 h-7 rounded-lg object-cover shadow-sm" onerror="this.style.display='none'">
+                    <span>${BRANDING.brandName}</span>
+                    <span id="panel-version" class="text-xs px-2 py-0.5 font-semibold bg-blue-100 text-blue-800 dark:bg-brand/15 dark:text-brand-light dark:ring-1 dark:ring-brand/30 rounded-full">v1.5.10</span>
                 </h1>
-                <div class="flex items-center gap-3 bg-gray-100 dark:bg-zinc-800/60 px-3 py-1.5 rounded-full border border-gray-200 dark:border-zinc-800/80 shadow-sm flex-shrink-0 w-fit">
-                    <a href="https://github.com/nikvpn-iran/n-map" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="GitHub">
-                        <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
-                        </svg>
-                    </a>
-                    <a href="https://t.me/nikvpn" target="_blank" rel="noopener noreferrer" class="text-sky-500 hover:text-sky-600 dark:hover:text-sky-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Telegram">
-                        <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.94-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.37.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .24z"/>
-                        </svg>
-                    </a>
-                    <a href="https://t.me/nikvpn" target="_blank" rel="noopener noreferrer" class="text-emerald-500 hover:text-emerald-600 dark:hover:text-emerald-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0" title="Bot">
-                        <svg class="w-[22px] h-[22px] flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M12 8V4H8"/>
-                            <rect width="16" height="12" x="4" y="8" rx="2"/>
-                            <path d="M2 14h2"/>
-                            <path d="M20 14h2"/>
-                            <path d="M15 13v2"/>
-                            <path d="M9 13v2"/>
-                        </svg>
-                    </a>
-                </div>
+                <div id="header-social" class="flex items-center gap-3 bg-gray-100 dark:bg-zinc-800/60 px-3 py-1.5 rounded-full border border-gray-200 dark:border-zinc-800/80 shadow-sm flex-shrink-0 w-fit"></div>
             </div>
             <div class="flex items-center justify-center gap-3 w-full md:w-auto mt-2 md:mt-0">
                 <button onclick="toggleSupportModal(true)" 
@@ -3082,11 +3120,11 @@ Commercial support is available at
     </header>
     <main class="max-w-6xl mx-auto px-4 py-8 pb-56 md:pb-32">
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md p-2.5 shadow-sm flex flex-col justify-center gap-1 hover:shadow-md hover:border-indigo-400 dark:hover:border-indigo-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
+    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-xl p-3 shadow-sm flex flex-col justify-center gap-1 hover:shadow-lg dark:hover:shadow-brand/10 hover:border-indigo-400 dark:hover:border-brand/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
         <div class="absolute -right-4 -bottom-4 w-16 h-16 bg-indigo-500/10 rounded-full blur-xl group-hover:scale-150 transition duration-500"></div>
         <div class="flex items-center justify-between relative z-10">
             <span class="text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-zinc-400 whitespace-nowrap">تعداد کل کاربران</span>
-            <div class="p-1 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-md flex-shrink-0">
+            <div class="p-1.5 bg-indigo-50 dark:bg-brand/15 text-indigo-600 dark:text-brand-light rounded-full flex-shrink-0 ring-1 ring-indigo-100 dark:ring-brand/20">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
             </div>
         </div>
@@ -3098,11 +3136,11 @@ Commercial support is available at
             </span>
         </div>
     </div>
-    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md p-2.5 shadow-sm flex flex-col justify-center gap-1 hover:shadow-md hover:border-emerald-400 dark:hover:border-emerald-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
+    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-xl p-3 shadow-sm flex flex-col justify-center gap-1 hover:shadow-lg dark:hover:shadow-brand/10 hover:border-emerald-400 dark:hover:border-emerald-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
         <div class="absolute -right-4 -bottom-4 w-16 h-16 bg-emerald-500/10 rounded-full blur-xl group-hover:scale-150 transition duration-500"></div>
         <div class="flex items-center justify-between relative z-10">
             <span class="text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-zinc-400 whitespace-nowrap">کاربران فعال (آنلاین)</span>
-            <div class="p-1 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 rounded-md flex-shrink-0">
+            <div class="p-1.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 rounded-full flex-shrink-0 ring-1 ring-emerald-100 dark:ring-emerald-500/20">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             </div>
         </div>
@@ -3114,11 +3152,11 @@ Commercial support is available at
             </span>
         </div>
     </div>
-    <div id="card-cf-requests" class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md p-2.5 shadow-sm flex flex-col justify-center gap-1 hover:shadow-md hover:border-orange-400 dark:hover:border-orange-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
+    <div id="card-cf-requests" class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-xl p-3 shadow-sm flex flex-col justify-center gap-1 hover:shadow-lg dark:hover:shadow-brand/10 hover:border-orange-400 dark:hover:border-orange-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
         <div class="absolute -right-4 -bottom-4 w-16 h-16 bg-orange-500/10 rounded-full blur-xl group-hover:scale-150 transition duration-500"></div>
         <div class="flex items-center justify-between relative z-10">
             <span class="text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-zinc-400 whitespace-nowrap">ریکوئست‌های روزانه</span>
-            <div class="p-1 bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 rounded-md flex-shrink-0">
+            <div class="p-1.5 bg-orange-50 dark:bg-orange-950/30 text-orange-600 dark:text-orange-400 rounded-full flex-shrink-0 ring-1 ring-orange-100 dark:ring-orange-500/20">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"></path></svg>
             </div>
         </div>
@@ -3138,11 +3176,11 @@ Commercial support is available at
             </div>
         </div>
     </div>
-    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md p-2.5 shadow-sm flex flex-col justify-center gap-1 hover:shadow-md hover:border-blue-400 dark:hover:border-blue-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
+    <div class="bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-xl p-3 shadow-sm flex flex-col justify-center gap-1 hover:shadow-lg dark:hover:shadow-brand/10 hover:border-blue-400 dark:hover:border-blue-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]">
         <div class="absolute -right-4 -bottom-4 w-16 h-16 bg-blue-500/10 rounded-full blur-xl group-hover:scale-150 transition duration-500"></div>
         <div class="flex items-center justify-between relative z-10">
             <span class="text-[11px] sm:text-xs font-semibold text-gray-500 dark:text-zinc-400 whitespace-nowrap">ترافیک مصرفی سرور</span>
-            <div class="p-1 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 rounded-md flex-shrink-0">
+            <div class="p-1.5 bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400 rounded-full flex-shrink-0 ring-1 ring-blue-100 dark:ring-blue-500/20">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
             </div>
         </div>
@@ -3618,24 +3656,11 @@ Commercial support is available at
                 <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
             </svg>
         </div>
-        <h3 class="font-black text-xl text-gray-900 dark:text-white mb-3">حمایت از N-MAP</h3>
+        <h3 id="support-brand-title" class="font-black text-xl text-gray-900 dark:text-white mb-3">حمایت از ما</h3>
         <p class="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed font-medium">
             این پروژه متن باز و رایگان است. برای تضمین پایداری و ادامه مسیر توسعه، نیازمند همراهی و حمایت شما عزیزان هستم. هرگونه حمایت شما، انگیزه من را برای ارائه امکانات بهتر دوچندان می‌کند. ❤️
         </p>
-        <div class="space-y-3">
-            <a href="https://daramet.com/ir_netlify" target="_blank" class="w-full py-3 bg-transparent border-2 border-green-600 text-green-700 hover:bg-green-900/20 hover:text-green-800 dark:border-green-500 dark:text-green-500 dark:hover:bg-green-900/40 dark:hover:text-green-400 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                حمایت مالی (ریالی)
-            </a>
-            <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="w-full py-3 bg-transparent border-2 border-orange-500 text-orange-600 hover:bg-orange-50 dark:border-orange-500/60 dark:text-orange-400 dark:hover:bg-orange-500/10 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 18a8 8 0 110-16 8 8 0 010 16zm-.75-3.25h1.5v-1.5h-1.5v1.5zm0-3.5h1.5v-3h-1.5v3z"/></svg>
-                حمایت مالی (رمز ارز)
-            </a>
-            <a href="https://github.com/nikvpn-iran/n-map" target="_blank" class="w-full py-3 bg-transparent border-2 border-gray-600 text-gray-700 hover:bg-gray-100 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-zinc-800 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">
-                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
-                ستاره در گیت‌هاب
-            </a>
-        </div>
+        <div id="branding-donate-links" class="space-y-3"></div>
             <button onclick="toggleSupportModal(false)" class="mt-4 w-full py-2.5 bg-transparent text-red-500 hover:text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-900/20 font-bold rounded-md text-sm transition duration-300">
                 بستن
             </button>
@@ -4453,7 +4478,7 @@ ${COMMON_TOAST_HTML}
 					}
 				} else {
                     if (reqCard) {
-                        reqCard.className = "bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-md p-2.5 shadow-sm flex flex-col justify-center gap-1 hover:shadow-md hover:border-orange-400 dark:hover:border-orange-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]";
+                        reqCard.className = "bg-white dark:bg-amoled-card border border-gray-200 dark:border-amoled-border rounded-xl p-3 shadow-sm flex flex-col justify-center gap-1 hover:shadow-lg dark:hover:shadow-brand/10 hover:border-orange-400 dark:hover:border-orange-500/50 transition duration-300 relative overflow-hidden group min-h-[64px]";
                     }
                     if (warningBtn) {
                         warningBtn.classList.add('hidden');
@@ -5151,23 +5176,48 @@ function editUser(encodedUsername) {
                 return '🌐';
             }
         }
+        // نگاشت کد کشور (ISO-2) به قاره و نام کامل کشور — برای دسته‌بندی لوکیشن‌ها
+        const COUNTRY_INFO = {
+            AE:['Asia','United Arab Emirates'],AF:['Asia','Afghanistan'],AM:['Asia','Armenia'],AZ:['Asia','Azerbaijan'],BD:['Asia','Bangladesh'],BH:['Asia','Bahrain'],BN:['Asia','Brunei'],BT:['Asia','Bhutan'],CN:['Asia','China'],GE:['Asia','Georgia'],HK:['Asia','Hong Kong'],ID:['Asia','Indonesia'],IL:['Asia','Israel'],IN:['Asia','India'],IQ:['Asia','Iraq'],IR:['Asia','Iran'],JO:['Asia','Jordan'],JP:['Asia','Japan'],KG:['Asia','Kyrgyzstan'],KH:['Asia','Cambodia'],KR:['Asia','South Korea'],KW:['Asia','Kuwait'],KZ:['Asia','Kazakhstan'],LA:['Asia','Laos'],LB:['Asia','Lebanon'],LK:['Asia','Sri Lanka'],MM:['Asia','Myanmar'],MN:['Asia','Mongolia'],MO:['Asia','Macau'],MV:['Asia','Maldives'],MY:['Asia','Malaysia'],NP:['Asia','Nepal'],OM:['Asia','Oman'],PH:['Asia','Philippines'],PK:['Asia','Pakistan'],QA:['Asia','Qatar'],SA:['Asia','Saudi Arabia'],SG:['Asia','Singapore'],TH:['Asia','Thailand'],TJ:['Asia','Tajikistan'],TR:['Asia','Turkey'],TW:['Asia','Taiwan'],UZ:['Asia','Uzbekistan'],VN:['Asia','Vietnam'],
+            AL:['Europe','Albania'],AT:['Europe','Austria'],BA:['Europe','Bosnia'],BE:['Europe','Belgium'],BG:['Europe','Bulgaria'],BY:['Europe','Belarus'],CH:['Europe','Switzerland'],CY:['Europe','Cyprus'],CZ:['Europe','Czechia'],DE:['Europe','Germany'],DK:['Europe','Denmark'],EE:['Europe','Estonia'],ES:['Europe','Spain'],FI:['Europe','Finland'],FR:['Europe','France'],GB:['Europe','United Kingdom'],GR:['Europe','Greece'],HR:['Europe','Croatia'],HU:['Europe','Hungary'],IE:['Europe','Ireland'],IS:['Europe','Iceland'],IT:['Europe','Italy'],LT:['Europe','Lithuania'],LU:['Europe','Luxembourg'],LV:['Europe','Latvia'],MD:['Europe','Moldova'],MK:['Europe','North Macedonia'],MT:['Europe','Malta'],NL:['Europe','Netherlands'],NO:['Europe','Norway'],PL:['Europe','Poland'],PT:['Europe','Portugal'],RO:['Europe','Romania'],RS:['Europe','Serbia'],RU:['Europe','Russia'],SE:['Europe','Sweden'],SI:['Europe','Slovenia'],SK:['Europe','Slovakia'],UA:['Europe','Ukraine'],
+            CA:['North America','Canada'],CR:['North America','Costa Rica'],GT:['North America','Guatemala'],MX:['North America','Mexico'],NI:['North America','Nicaragua'],PA:['North America','Panama'],US:['North America','United States'],
+            AR:['South America','Argentina'],BO:['South America','Bolivia'],BR:['South America','Brazil'],CL:['South America','Chile'],CO:['South America','Colombia'],EC:['South America','Ecuador'],PE:['South America','Peru'],PY:['South America','Paraguay'],UY:['South America','Uruguay'],VE:['South America','Venezuela'],
+            AO:['Africa','Angola'],CD:['Africa','DR Congo'],CI:['Africa','Ivory Coast'],DZ:['Africa','Algeria'],EG:['Africa','Egypt'],GH:['Africa','Ghana'],KE:['Africa','Kenya'],MA:['Africa','Morocco'],MU:['Africa','Mauritius'],NA:['Africa','Namibia'],NG:['Africa','Nigeria'],RE:['Africa','Réunion'],TN:['Africa','Tunisia'],ZA:['Africa','South Africa'],
+            AU:['Oceania','Australia'],FJ:['Oceania','Fiji'],GU:['Oceania','Guam'],NZ:['Oceania','New Zealand'],PG:['Oceania','Papua New Guinea'],
+        };
+        const CONTINENT_ORDER = ['Asia','Europe','North America','South America','Africa','Oceania','Other'];
         function renderLocationsUI(locations, activeIata) {
             const select = document.getElementById('location-select');
             const userSelect = document.getElementById('user-location-select');
-            locations.sort((a, b) => (a.cca2 || '').localeCompare(b.cca2 || ''));
-            let html = '<option value="">🌐 پیش‌فرض (لوکیشن خودکار)</option>';
-            let userHtml = '<option value="">🌐 استفاده از تنظیمات عمومی پنل</option>';
+            // گروه‌بندی بر اساس قاره
+            const groups = {};
             locations.forEach(loc => {
-                if (loc.iata && loc.city) {
-                    const flag = getFlagEmoji(loc.cca2);
-                    const isSelected = loc.iata.toUpperCase() === activeIata.toUpperCase() ? 'selected' : '';
-                    const optionStr = '<option value="' + loc.iata + '" ' + isSelected + '>' + flag + ' ' + loc.city + ' (' + loc.iata + ')</option>';
-                    html += optionStr;
-                    userHtml += '<option value="' + loc.iata + '">' + flag + ' ' + loc.city + ' (' + loc.iata + ')</option>';
-                }
+                if (!loc.iata || !loc.city) return;
+                const info = COUNTRY_INFO[(loc.cca2 || '').toUpperCase()];
+                const continent = info ? info[0] : 'Other';
+                const country = info ? info[1] : (loc.cca2 || '');
+                if (!groups[continent]) groups[continent] = [];
+                groups[continent].push({ iata: loc.iata, city: loc.city, cca2: loc.cca2, country: country });
             });
-            if (select) select.innerHTML = html;
-            if (userSelect) userSelect.innerHTML = userHtml;
+            const buildOptions = (withSelected) => {
+                let out = '';
+                CONTINENT_ORDER.forEach(cont => {
+                    const list = groups[cont];
+                    if (!list || list.length === 0) return;
+                    list.sort((a, b) => (a.country + a.city).localeCompare(b.country + b.city));
+                    out += '<optgroup label="' + cont + '">';
+                    list.forEach(loc => {
+                        const flag = getFlagEmoji(loc.cca2);
+                        const label = loc.city + (loc.country ? ' - ' + loc.country : '') + ' (' + loc.iata + ')';
+                        const sel = withSelected && activeIata && loc.iata.toUpperCase() === activeIata.toUpperCase() ? ' selected' : '';
+                        out += '<option value="' + loc.iata + '"' + sel + '>' + flag + ' ' + label + '</option>';
+                    });
+                    out += '</optgroup>';
+                });
+                return out;
+            };
+            if (select) select.innerHTML = '<option value="">🌐 پیش‌فرض (لوکیشن خودکار)</option>' + buildOptions(true);
+            if (userSelect) userSelect.innerHTML = '<option value="">🌐 استفاده از تنظیمات عمومی پنل</option>' + buildOptions(false);
         }
 async function loadLocations() {
     const cachedLocations = localStorage.getItem('cached_locations_list');
@@ -5675,6 +5725,43 @@ function applySelectedIps() {
 	document.getElementById('hidden-ip-count').value = count;
     toggleIpSelectorModal(false);
 }
+function renderBrandingLinks() {
+    try {
+        const B = window.BRANDING || {};
+        const ICONS = window.SOCIAL_ICONS || {};
+        // نام برند در هدر
+        const brandNameEl = document.getElementById('brand-name');
+        if (brandNameEl && B.brandName) brandNameEl.textContent = B.brandName;
+        // آیکون‌های سوشال در هدر
+        const socialBox = document.getElementById('header-social');
+        if (socialBox && Array.isArray(B.social)) {
+            socialBox.innerHTML = B.social.map(function(s) {
+                const icon = ICONS[s.icon] || ICONS.website || '';
+                return '<a href="' + s.url + '" target="_blank" rel="noopener noreferrer" title="' + (s.label || '') + '" class="text-gray-600 hover:text-blue-500 dark:text-gray-400 dark:hover:text-blue-400 transition-all transform hover:scale-125 duration-200 flex-shrink-0">' + icon + '</a>';
+            }).join('');
+        }
+        // لینک‌های دونیت در مودال حمایت
+        const donateBox = document.getElementById('branding-donate-links');
+        if (donateBox) {
+            let html = '';
+            (B.donateFiat || []).forEach(function(d) {
+                html += '<a href="' + d.url + '" target="_blank" class="w-full py-3 bg-transparent border-2 border-orange-500 text-orange-600 hover:bg-orange-50 dark:border-orange-500/60 dark:text-orange-400 dark:hover:bg-orange-500/10 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2">' + (d.label || 'حمایت مالی') + '</a>';
+            });
+            (B.wallets || []).filter(function(w){ return w.value; }).forEach(function(w) {
+                html += '<button type="button" onclick="copyWalletAddress(this, \\'' + encodeURIComponent(w.value) + '\\')" class="w-full py-3 bg-transparent border-2 border-gray-500 text-gray-700 hover:bg-gray-100 dark:border-gray-500 dark:text-gray-300 dark:hover:bg-zinc-800 font-bold rounded-md text-sm transition duration-300 shadow-sm flex items-center justify-center gap-2" dir="ltr">' + (w.label || 'Wallet') + '</button>';
+            });
+            donateBox.innerHTML = html;
+        }
+    } catch (e) {}
+}
+function copyWalletAddress(btn, encoded) {
+    const addr = decodeURIComponent(encoded);
+    navigator.clipboard.writeText(addr).then(function() {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✅ کپی شد!';
+        setTimeout(function() { btn.innerHTML = orig; }, 1500);
+    }).catch(function() {});
+}
 document.addEventListener('DOMContentLoaded', () => {
 			const freeModal = document.getElementById('free-panel-warning-modal');
             const freeCard = freeModal.querySelector('div');
@@ -5684,6 +5771,7 @@ document.addEventListener('DOMContentLoaded', () => {
             freeCard.classList.add('opacity-100', 'scale-100');
             const versionBadge = document.getElementById('panel-version');
             if (versionBadge) versionBadge.innerText = 'v' + CURRENT_VERSION;
+            renderBrandingLinks();
             renderPortCheckboxes();
             loadUsers();
             loadLocations();
